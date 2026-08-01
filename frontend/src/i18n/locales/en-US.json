@@ -1,0 +1,107 @@
+{
+  "app": {
+    "title": "FIRST Inventory",
+    "subtitle": "FRC + FTC"
+  },
+  "nav": {
+    "checkout": "Check In/Out",
+    "out": "Check Out",
+    "in": "Check In",
+    "return": "Return",
+    "query": "Lookup",
+    "items": "Items",
+    "history": "History",
+    "board": "Dashboard",
+    "settings": "Settings"
+  },
+  "scan": {
+    "placeholder": "Scan barcode and press Enter",
+    "confirm": "Confirm",
+    "quantity": "Quantity",
+    "operator": "Operator",
+    "note": "Note",
+    "success": "Success",
+    "remaining": "Stock left",
+    "unknown": "Unknown barcode",
+    "selectOperator": "Select operator"
+  },
+  "batch": {
+    "scanPlaceholder": "Scan or type barcode then press Enter — keep scanning to add more items",
+    "operation": "Operation",
+    "out": "Check Out",
+    "in": "Check In",
+    "return": "Return",
+    "added": "Added",
+    "confirmAll": "Confirm All",
+    "clearAll": "Clear All",
+    "emptyHint": "Scan or type barcodes above to add items to the list. You can check out, check in, and return items all at once.",
+    "allSuccess": "All {count} transactions succeeded",
+    "allFailed": "All transactions failed — check items and retry",
+    "partialSuccess": "Partial success: {ok} succeeded, {err} failed (failed items kept in list)",
+    "insufficient": "Insufficient stock (have {have}, need {need})"
+  },
+  "item": {
+    "barcode": "Barcode",
+    "nameZh": "Name (ZH)",
+    "nameEn": "Name (EN)",
+    "program": "Program",
+    "trackMode": "Mode",
+    "category": "Category",
+    "stock": "Stock",
+    "minStock": "Min stock",
+    "location": "Location",
+    "snp": "Serialized (SNP)",
+    "blk": "Bulk (BLK)"
+  },
+  "items": {
+    "search": "Search name or barcode",
+    "add": "Add item",
+    "import": "Import",
+    "export": "Export",
+    "template": "Download template"
+  },
+  "settings": {
+    "labelSize": "Label size (mm)",
+    "width": "Width",
+    "height": "Height",
+    "printerHint": "Select printer PQ00 (PUQU) when printing",
+    "backup": "Backup database",
+    "stats": "Statistics",
+    "totalItems": "Item types",
+    "lowStock": "Low stock",
+    "language": "Language"
+  },
+  "board": {
+    "title": "Warehouse Board",
+    "exit": "Back to ops",
+    "inboundToday": "Inbound today",
+    "todayQty": "Units received today",
+    "todayCount": "Inbound transactions",
+    "weekQty": "Units this week",
+    "recentIn": "Recent inbound",
+    "noRecent": "No inbound yet today",
+    "lowStock": "Stock alerts",
+    "stock": "Stock",
+    "critical": "Out of stock",
+    "warning": "Below minimum",
+    "allOk": "No alerts",
+    "autoRefresh": "Auto-refresh every 30s"
+  },
+  "operators": {
+    "title": "Operators",
+    "hint": "Names appear in the dropdown on scan pages. Press Enter or click Add.",
+    "placeholder": "Team member name",
+    "add": "Add",
+    "added": "Operator added",
+    "nameRequired": "Enter a name",
+    "empty": "No operators yet"
+  },
+  "common": {
+    "save": "Save",
+    "saved": "Saved",
+    "cancel": "Cancel",
+    "delete": "Deactivate",
+    "loading": "Loading…",
+    "error": "Error"
+  }
+}

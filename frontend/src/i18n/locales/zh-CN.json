@@ -1,0 +1,107 @@
+{
+  "app": {
+    "title": "FIRST 物资出入库",
+    "subtitle": "FRC + FTC"
+  },
+  "nav": {
+    "checkout": "出入库",
+    "out": "出库",
+    "in": "入库",
+    "return": "归还",
+    "query": "查询",
+    "items": "物资",
+    "history": "流水",
+    "board": "展板",
+    "settings": "设置"
+  },
+  "scan": {
+    "placeholder": "扫码或输入条码后回车",
+    "confirm": "确认",
+    "quantity": "数量",
+    "operator": "操作人",
+    "note": "备注",
+    "success": "操作成功",
+    "remaining": "剩余库存",
+    "unknown": "未识别条码",
+    "selectOperator": "请选择操作人"
+  },
+  "batch": {
+    "scanPlaceholder": "扫码或输入条码后回车 — 可连续扫码添加多种物资",
+    "operation": "操作",
+    "out": "出库",
+    "in": "入库",
+    "return": "归还",
+    "added": "已添加",
+    "confirmAll": "确认全部",
+    "clearAll": "清空列表",
+    "emptyHint": "在上方扫码或输入条码来添加物资到操作列表，支持同时出库、入库和归还",
+    "allSuccess": "全部操作成功，共 {count} 笔",
+    "allFailed": "所有操作均失败，请检查后重试",
+    "partialSuccess": "部分成功：{ok} 笔成功，{err} 笔失败（已保留失败的条目）",
+    "insufficient": "库存不足（现有 {have}，需要 {need}）"
+  },
+  "item": {
+    "barcode": "条码",
+    "nameZh": "中文名",
+    "nameEn": "英文名",
+    "program": "项目",
+    "trackMode": "模式",
+    "category": "分类",
+    "stock": "库存",
+    "minStock": "最低库存",
+    "location": "库位",
+    "snp": "单品(SNP)",
+    "blk": "批量(BLK)"
+  },
+  "items": {
+    "search": "搜索名称或条码",
+    "add": "新增物资",
+    "import": "导入",
+    "export": "导出",
+    "template": "下载模板"
+  },
+  "settings": {
+    "labelSize": "标签尺寸 (mm)",
+    "width": "宽",
+    "height": "高",
+    "printerHint": "打印时请选择打印机 PQ00（璞趣）",
+    "backup": "备份数据库",
+    "stats": "统计",
+    "totalItems": "物资种类",
+    "lowStock": "低库存",
+    "language": "语言"
+  },
+  "board": {
+    "title": "仓库展板",
+    "exit": "返回操作",
+    "inboundToday": "今日入库",
+    "todayQty": "入库件数（今日合计）",
+    "todayCount": "入库笔数",
+    "weekQty": "本周入库件数",
+    "recentIn": "最近入库",
+    "noRecent": "今日暂无入库记录",
+    "lowStock": "库存预警",
+    "stock": "库存",
+    "critical": "缺货",
+    "warning": "低于最低库存",
+    "allOk": "暂无预警，库存正常",
+    "autoRefresh": "每 30 秒自动刷新"
+  },
+  "operators": {
+    "title": "操作人管理",
+    "hint": "添加后会在出库/入库页的下拉框中显示；输入姓名后点添加或按回车。",
+    "placeholder": "输入队员姓名",
+    "add": "添加",
+    "added": "已添加操作人",
+    "nameRequired": "请输入姓名",
+    "empty": "暂无操作人，请先添加"
+  },
+  "common": {
+    "save": "保存",
+    "saved": "已保存",
+    "cancel": "取消",
+    "delete": "停用",
+    "loading": "加载中…",
+    "error": "错误"
+  }
+}

@@ -1,0 +1,274 @@
+:root {
+  --bg: #0f1419;
+  --surface: #1a2332;
+  --border: #2d3a4f;
+  --text: #e7ecf3;
+  --muted: #8b9cb3;
+  --accent: #3d8bfd;
+  --success: #3dd68c;
+  --danger: #f66d6d;
+  --warn: #f5a623;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+button,
+.btn {
+  cursor: pointer;
+  border: none;
+  border-radius: 10px;
+  padding: 12px 20px;
+  font-size: 1rem;
+  font-weight: 600;
+  background: var(--accent);
+  color: #fff;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.secondary {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+button.danger {
+  background: var(--danger);
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  padding: 14px 16px;
+  font-size: 1.1rem;
+  border-radius: 10px;
+  border: 2px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+input:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px;
+}
+
+.layout {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 16px;
+  background: #121820;
+  border-bottom: 1px solid var(--border);
+}
+
+.nav a {
+  padding: 8px 14px;
+  border-radius: 8px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.nav a.router-link-active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.main {
+  flex: 1;
+  padding: 16px;
+  /* 14 寸笔记本（1366px 宽）适配：从 900px 放宽到 1280px，
+     并预留右侧库存预警条（约 40px）的空间 */
+  max-width: min(1280px, calc(100vw - 80px));
+  margin: 0 auto;
+  width: 100%;
+  overflow-y: auto;
+}
+
+.main-board {
+  max-width: 100%;
+  padding: 20px 24px;
+}
+
+.layout-board .body-row {
+  min-height: 100vh;
+}
+
+.layout-board {
+  min-height: 100vh;
+}
+
+.scan-input {
+  font-size: 1.5rem !important;
+  text-align: center;
+  letter-spacing: 0.05em;
+}
+
+.item-display {
+  text-align: center;
+  margin: 20px 0;
+}
+
+.item-display h2 {
+  margin: 8px 0;
+  font-size: 1.6rem;
+}
+
+.item-display .stock {
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: var(--success);
+}
+
+.item-display.low .stock {
+  color: var(--warn);
+}
+
+.item-display.empty .stock {
+  color: var(--danger);
+}
+
+.flash-ok {
+  animation: flashOk 0.4s ease;
+}
+
+.flash-err {
+  animation: flashErr 0.4s ease;
+}
+
+@keyframes flashOk {
+  0% { background: #1a3d2e; }
+  100% { background: transparent; }
+}
+
+@keyframes flashErr {
+  0% { background: #3d1a1a; }
+  100% { background: transparent; }
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+th,
+td {
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.row-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+
+.form-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.form-grid label {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.msg {
+  padding: 12px;
+  border-radius: 8px;
+  margin: 12px 0;
+}
+
+.msg.error {
+  background: #3d1a1a;
+  color: var(--danger);
+}
+
+.msg.ok {
+  background: #1a3d2e;
+  color: var(--success);
+}
+
+/* ── scrollbar ── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
