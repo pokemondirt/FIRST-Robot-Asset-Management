@@ -16,7 +16,6 @@ FRC + FTC 共用 · 扫码枪自助 · 璞趣 PQ00 标签（40×30 mm）
 - Windows 10+
 - [Go 1.22+](https://go.dev/dl/)
 - [Node.js 18+](https://nodejs.org/)（开发前端或构建静态页）
-- 璞趣打印机 USB 驱动（打印机名 **PQ00**）
 
 ## 快速启动（开发）
 
