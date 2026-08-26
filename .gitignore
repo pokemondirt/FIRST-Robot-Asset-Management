@@ -20,9 +20,6 @@ reasonix.toml
 __pycache__/
 *.pyc
 
-# 旧版 Python 后端数据
-backend/data/
-
 # 系统
 .DS_Store
 Thumbs.db
