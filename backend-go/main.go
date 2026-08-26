@@ -73,7 +73,11 @@ func main() {
 	mux.HandleFunc("POST /api/data/backup", handleBackup)
 
 	// Static UI (optional): run build-frontend.ps1 first
-	frontendDist := filepath.Join(filepath.Dir(execDir), "..", "frontend", "dist")
+	// Look for dist in: release layout (next to exe) -> dev layout (../frontend/dist)
+	frontendDist := filepath.Join(filepath.Dir(execDir), "dist")
+	if _, err := os.Stat(frontendDist); os.IsNotExist(err) {
+		frontendDist = filepath.Join(filepath.Dir(execDir), "..", "frontend", "dist")
+	}
 	if _, err := os.Stat(frontendDist); os.IsNotExist(err) {
 		frontendDist = filepath.Join("..", "frontend", "dist")
 	}

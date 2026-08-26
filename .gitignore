@@ -7,6 +7,10 @@ frontend/node_modules/
 frontend/dist/
 *.exe
 
+# 发布产生的安装包（可用 build-release.ps1 重新生成）
+scripts/release/FIRST-Inventory.zip
+scripts/release/stage/
+
 # 工具目录
 .codegraph/
 .reasonix/
