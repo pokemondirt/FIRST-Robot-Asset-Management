@@ -144,54 +144,6 @@ select:focus {
   min-height: 100vh;
 }
 
-.scan-input {
-  font-size: 1.5rem !important;
-  text-align: center;
-  letter-spacing: 0.05em;
-}
-
-.item-display {
-  text-align: center;
-  margin: 20px 0;
-}
-
-.item-display h2 {
-  margin: 8px 0;
-  font-size: 1.6rem;
-}
-
-.item-display .stock {
-  font-size: 2.5rem;
-  font-weight: 700;
-  color: var(--success);
-}
-
-.item-display.low .stock {
-  color: var(--warn);
-}
-
-.item-display.empty .stock {
-  color: var(--danger);
-}
-
-.flash-ok {
-  animation: flashOk 0.4s ease;
-}
-
-.flash-err {
-  animation: flashErr 0.4s ease;
-}
-
-@keyframes flashOk {
-  0% { background: #1a3d2e; }
-  100% { background: transparent; }
-}
-
-@keyframes flashErr {
-  0% { background: #3d1a1a; }
-  100% { background: transparent; }
-}
-
 .table-wrap {
   overflow-x: auto;
 }

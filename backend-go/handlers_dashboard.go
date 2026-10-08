@@ -71,7 +71,7 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 		JOIN items i ON i.id = t.item_id
 		LEFT JOIN operators o ON o.id = t.operator_id
 		WHERE t.type = ?
-		ORDER BY t.created_at DESC
+		ORDER BY t.created_at DESC, t.id DESC
 		LIMIT 15
 	`, TxIn)
 	recentLines := []RecentInboundLine{}

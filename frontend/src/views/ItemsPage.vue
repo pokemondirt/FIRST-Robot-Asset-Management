@@ -62,9 +62,15 @@ async function load() {
   const params = { page: page.value, page_size: pageSize }
   if (q.value) params.q = q.value
   if (showInactive.value) params.active_only = 'false'
-  const res = await api.listItems(params)
-  items.value = res.items
-  total.value = res.total
+  try {
+    const res = await api.listItems(params)
+    items.value = res.items
+    total.value = res.total
+  } catch (e) {
+    items.value = []
+    total.value = 0
+    message.value = e.message
+  }
 }
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
@@ -122,23 +128,30 @@ function openEdit(it) {
 async function submitForm() {
   saving.value = true
   try {
+    // v-model.number yields '' when a numeric input is cleared, and the API
+    // only accepts integers there, so coerce before sending.
+    const asCount = (v) => {
+      const n = Number(v)
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
+    }
+    const payload = {
+      name_zh: form.value.name_zh,
+      name_en: form.value.name_en,
+      program: form.value.program,
+      track_mode: form.value.track_mode,
+      category: form.value.category,
+      spec: form.value.spec,
+      unit: form.value.unit,
+      min_stock: asCount(form.value.min_stock),
+      note: form.value.note,
+      location_id: form.value.location_id || null,
+      quantity_initial: asCount(form.value.quantity_initial),
+    }
     if (editingId.value) {
-      const body = {
-        name_zh: form.value.name_zh,
-        name_en: form.value.name_en,
-        program: form.value.program,
-        track_mode: form.value.track_mode,
-        category: form.value.category,
-        spec: form.value.spec,
-        unit: form.value.unit,
-        min_stock: form.value.min_stock,
-        note: form.value.note,
-        location_id: form.value.location_id,
-      }
-      await api.updateItem(editingId.value, body)
+      await api.updateItem(editingId.value, payload)
       message.value = locale.value === 'zh-CN' ? '已更新' : 'Updated'
     } else {
-      await api.createItem(form.value)
+      await api.createItem(payload)
       message.value = 'OK'
     }
     showForm.value = false

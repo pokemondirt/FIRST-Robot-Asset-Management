@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -32,17 +33,49 @@ func initDB(dataDir string) {
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		log.Fatalf("create data dir: %v", err)
 	}
+	// DSN parameters are driver specific. modernc.org/sqlite only understands
+	// _pragma/_time_format/_txlock, so the mattn/go-sqlite3 style
+	// "?_journal_mode=WAL&_foreign_keys=on" used to be dropped silently,
+	// leaving the database in rollback-journal mode with foreign keys OFF.
 	dbPath := filepath.Join(dataDir, "inventory.db")
 
 	var err error
-	db, err = sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_foreign_keys=on&_time_format=sqlite")
+	db, err = sql.Open("sqlite", dbPath+
+		"?_pragma=journal_mode(WAL)"+
+		"&_pragma=foreign_keys(1)"+
+		"&_pragma=busy_timeout(5000)")
 	if err != nil {
 		log.Fatalf("open db: %v", err)
 	}
 	db.SetMaxOpenConns(1)
 
+	if err := verifyPragmas(); err != nil {
+		log.Fatalf("db pragmas: %v", err)
+	}
+
 	migrate()
 	seed()
+}
+
+// verifyPragmas fails fast when the connection parameters did not take effect.
+// Both settings used to be requested with parameters this driver ignores, and
+// the silent downgrade went unnoticed until an orphan location_id showed up.
+func verifyPragmas() error {
+	var journalMode string
+	if err := db.QueryRow("PRAGMA journal_mode").Scan(&journalMode); err != nil {
+		return err
+	}
+	if journalMode != "wal" {
+		return fmt.Errorf("journal_mode is %q, want wal", journalMode)
+	}
+	var foreignKeys int
+	if err := db.QueryRow("PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {
+		return err
+	}
+	if foreignKeys != 1 {
+		return fmt.Errorf("foreign_keys is %d, want 1", foreignKeys)
+	}
+	return nil
 }
 
 func migrate() {
@@ -123,19 +156,10 @@ func migrate() {
 }
 
 func seed() {
-	// Default settings
-	settings := map[string]string{
-		"label_width_mm":  "40",
-		"label_height_mm": "30",
-	}
-	for k, v := range settings {
-		_, err := db.Exec(
-			"INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)",
-			k, v,
-		)
-		if err != nil {
-			log.Printf("seed setting %s: %v", k, err)
-		}
+	// The label size settings were dropped along with the label printer
+	// integration, so clean up the rows older databases still carry.
+	if _, err := db.Exec("DELETE FROM app_settings WHERE key IN ('label_width_mm', 'label_height_mm')"); err != nil {
+		log.Printf("drop legacy label settings: %v", err)
 	}
 
 	// Default categories

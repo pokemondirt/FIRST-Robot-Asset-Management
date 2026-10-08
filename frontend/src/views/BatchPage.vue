@@ -109,8 +109,15 @@ async function onScanEnter() {
     // Check if already in cart
     const existing = lines.value.find(l => l.barcode === item.barcode)
     if (existing) {
-      existing.quantity++
-      message.value = `${displayName(item)} +1 → ${existing.quantity}`
+      if (item.track_mode === 'SNP') {
+        // Serialized parts are always one unit; adding another scan would show
+        // a quantity the picker cannot correct (the input is disabled).
+        existing.quantity = 1
+        message.value = `${displayName(item)} ×1 (SNP)`
+      } else {
+        existing.quantity++
+        message.value = `${displayName(item)} +1 → ${existing.quantity}`
+      }
       messageOk.value = true
       playBeep(true)
     } else {
@@ -221,7 +228,9 @@ async function confirmAll() {
     }
     focusScan()
   } catch (e) {
-    message.value = e.message
+    // A request where every line failed comes back as a 400, so map its code
+    // back to the localized message instead of showing the server's English.
+    message.value = e.code === 'ALL_FAILED' ? t('batch.allFailed') : e.message
     messageOk.value = false
     playBeep(false)
   } finally {
@@ -400,10 +409,15 @@ function clearAll() {
 
 .scan-bar { margin-bottom: 12px; }
 
+/* The scan bar is the primary control on this page, so it stays large and
+   centred. These properties used to live in a global styles.css rule that only
+   existed for the removed single-scan page. */
 .scan-input {
   width: 100%;
   padding: 14px 16px;
-  font-size: 1.15rem;
+  font-size: 1.5rem;
+  text-align: center;
+  letter-spacing: 0.05em;
   border: 2px solid var(--accent);
   border-radius: 12px;
   background: var(--bg);

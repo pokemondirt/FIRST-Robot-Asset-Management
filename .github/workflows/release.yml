@@ -1,0 +1,106 @@
+name: Release
+
+# Builds the self-contained packages and attaches them to a GitHub Release.
+# Push a tag such as v1.0.0 to publish; run the workflow manually to only get
+# the zips as downloadable build artifacts.
+#
+# The released packages need neither Go nor Node.js on the machine that runs
+# them: the backend is a static Go binary (the SQLite driver is pure Go, so
+# CGO is off and cross compilation works) and the UI is served from dist/.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend-go/go.mod
+          cache-dependency-path: backend-go/go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Test backend
+        working-directory: backend-go
+        run: go test ./... -count=1
+
+      - name: Package every target
+        run: |
+          set -euo pipefail
+          rm -rf out
+          mkdir -p out
+
+          for target in windows/amd64 windows/arm64 linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            os="${target%%/*}"
+            arch="${target##*/}"
+            exe="first-inventory"
+            if [ "$os" = "windows" ]; then
+              exe="inventory-server.exe"
+            fi
+
+            stage="out/stage-$os-$arch"
+            mkdir -p "$stage"
+
+            ( cd backend-go && CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+                go build -trimpath -ldflags "-s -w" -o "../$stage/$exe" . )
+            cp -r frontend/dist "$stage/dist"
+            # MIT requires the licence text to travel with every copy.
+            cp LICENSE "$stage/"
+
+            if [ "$os" = "windows" ]; then
+              cp scripts/release/start.bat "$stage/"
+              cp scripts/release/open-browser.ps1 "$stage/"
+              cp scripts/release/install-desktop.bat "$stage/"
+              cp scripts/release/README.txt "$stage/"
+            else
+              sed -e "s/[{][{]OS[}][}]/$os/" -e "s/[{][{]ARCH[}][}]/$arch/" \
+                scripts/release/README-portable.txt > "$stage/README.txt"
+            fi
+
+            # List the children explicitly: `zip -r x.zip .` can store a "./"
+            # prefix, which would make the archive extract into a subfolder.
+            (
+              cd "$stage"
+              mapfile -t entries < <(ls -A)
+              zip -qr "../FIRST-Inventory-$os-$arch.zip" "${entries[@]}"
+            )
+            rm -rf "$stage"
+            echo "built FIRST-Inventory-$os-$arch.zip"
+          done
+
+          ls -lh out
+
+      - name: Upload build artifacts
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: FIRST-Inventory
+          path: out/*.zip
+          if-no-files-found: error
+
+      - name: Publish release
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" out/*.zip \
+            --title "$GITHUB_REF_NAME" --generate-notes

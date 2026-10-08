@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -10,15 +11,53 @@ import (
 	"time"
 )
 
-func corsMiddleware(next http.Handler) http.Handler {
+// guardMiddleware closes the cross-site request hole that a LAN deployment
+// otherwise leaves open.
+//
+// The server listens on every interface and the API has no authentication, so
+// any web page an operator visits could reach it. CORS only restricts reading
+// responses: a cross-origin request that uses one of the "simple" content
+// types is sent without a preflight and the write still happens. Rejecting
+// those content types therefore blocks the attack at the point that matters,
+// while the app itself is unaffected because it always sends
+// application/json from the same origin.
+//
+// Note that the API stays reachable from other machines on the LAN by design;
+// this only stops browsers from being used as a proxy for it.
+func guardMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+
 		if r.Method == http.MethodOptions {
+			// No CORS headers are returned, so a browser preflight fails and
+			// cross-origin JSON calls are blocked.
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+
+		switch r.Method {
+		case http.MethodGet, http.MethodHead:
+		default:
+			if ct := r.Header.Get("Content-Type"); ct != "" {
+				mediaType, _, err := mime.ParseMediaType(ct)
+				if err != nil {
+					writeError(w, 400, "invalid Content-Type")
+					return
+				}
+				switch mediaType {
+				case "application/x-www-form-urlencoded", "text/plain":
+					writeError(w, 415, "Content-Type must be application/json")
+					return
+				case "multipart/form-data":
+					// Only the CSV import legitimately posts a form body.
+					if r.URL.Path != "/api/data/import" {
+						writeError(w, 415, "Content-Type must be application/json")
+						return
+					}
+				}
+			}
+		}
+
 		next.ServeHTTP(w, r)
 	})
 }

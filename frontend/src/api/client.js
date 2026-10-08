@@ -6,17 +6,25 @@ async function request(path, options = {}) {
     ...options,
   })
   if (!res.ok) {
+    // Keep the parsed body on the error so callers can react to the machine
+    // readable `code` instead of matching on an English message.
+    let body = null
     let detail = res.statusText
     try {
-      const body = await res.json()
-      const d = body.detail
+      body = await res.json()
+      const d = body?.detail
       detail =
         (typeof d === 'object' && (d?.message || d?.detail)) ||
         (typeof d === 'string' ? d : null) ||
-        body.message ||
+        body?.message ||
         JSON.stringify(body)
     } catch (_) {}
-    throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail))
+    const err = new Error(typeof detail === 'string' ? detail : JSON.stringify(detail))
+    err.status = res.status
+    err.body = body
+    err.code = body?.detail?.code || body?.code || null
+    err.payload = body?.detail ?? body
+    throw err
   }
   if (res.status === 204) return null
   const ct = res.headers.get('content-type') || ''
@@ -64,7 +72,17 @@ export const api = {
     const fd = new FormData()
     fd.append('file', file)
     const res = await fetch(`${BASE}/data/import`, { method: 'POST', body: fd })
-    if (!res.ok) throw new Error(await res.text())
+    if (!res.ok) {
+      const text = await res.text()
+      let detail = text
+      try {
+        const parsed = JSON.parse(text)
+        detail = parsed?.detail ?? text
+      } catch (_) {}
+      const err = new Error(typeof detail === 'string' ? detail : JSON.stringify(detail))
+      err.status = res.status
+      throw err
+    }
     return res.json()
   },
   exportCsvUrl: () => `${BASE}/data/export/csv`,

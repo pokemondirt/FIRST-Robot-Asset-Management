@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // --- Locations ---
@@ -50,14 +51,24 @@ func handleCreateLocation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Code = strings.TrimSpace(req.Code)
+	req.NameZh = strings.TrimSpace(req.NameZh)
+	req.NameEn = strings.TrimSpace(req.NameEn)
 	if req.Code == "" {
 		writeError(w, 400, "code required")
 		return
 	}
+	if !checkLengths(w,
+		fieldLimit{"code", req.Code, MaxCodeLen},
+		fieldLimit{"name_zh", req.NameZh, MaxLocationNameLen},
+		fieldLimit{"name_en", req.NameEn, MaxLocationNameLen},
+	) {
+		return
+	}
 
-	// Check duplicate
+	// Case-insensitive: "A-01" and "a-01" are the same shelf to a human, and
+	// the barcode-like codes are typed by hand.
 	var exists int
-	db.QueryRow("SELECT COUNT(*) FROM locations WHERE code = ?", req.Code).Scan(&exists)
+	db.QueryRow("SELECT COUNT(*) FROM locations WHERE code = ? COLLATE NOCASE", req.Code).Scan(&exists)
 	if exists > 0 {
 		writeError(w, 400, "Location code exists")
 		return
@@ -89,34 +100,58 @@ func handleUpdateLocation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req LocationRequest
+	var req LocationUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, 400, "invalid JSON")
 		return
 	}
 
+	var found int
+	if err := db.QueryRow("SELECT COUNT(*) FROM locations WHERE id = ?", id).Scan(&found); err != nil || found == 0 {
+		writeError(w, 404, "Location not found")
+		return
+	}
+
 	sets := []string{}
 	args := []any{}
-	if req.Code != "" {
-		// Check duplicate code (exclude self)
-		var exists int
-		db.QueryRow("SELECT COUNT(*) FROM locations WHERE code = ? AND id != ?", req.Code, id).Scan(&exists)
-		if exists > 0 {
+	limits := []fieldLimit{}
+
+	if req.Code != nil {
+		code := strings.TrimSpace(*req.Code)
+		if code == "" {
+			writeError(w, 400, "code required")
+			return
+		}
+		limits = append(limits, fieldLimit{"code", code, MaxCodeLen})
+		// Case-insensitive duplicate check (exclude self).
+		var dup int
+		db.QueryRow("SELECT COUNT(*) FROM locations WHERE code = ? COLLATE NOCASE AND id != ?", code, id).Scan(&dup)
+		if dup > 0 {
 			writeError(w, 400, "Location code exists")
 			return
 		}
 		sets = append(sets, "code = ?")
-		args = append(args, req.Code)
+		args = append(args, code)
 	}
-	if req.NameZh != "" {
+	// An empty name is a legitimate value here: that is how a name is cleared.
+	// The previous `if req.NameZh != ""` test made clearing impossible while
+	// the endpoint still answered 200.
+	if req.NameZh != nil {
+		name := strings.TrimSpace(*req.NameZh)
+		limits = append(limits, fieldLimit{"name_zh", name, MaxLocationNameLen})
 		sets = append(sets, "name_zh = ?")
-		args = append(args, req.NameZh)
+		args = append(args, name)
 	}
-	if req.NameEn != "" {
+	if req.NameEn != nil {
+		name := strings.TrimSpace(*req.NameEn)
+		limits = append(limits, fieldLimit{"name_en", name, MaxLocationNameLen})
 		sets = append(sets, "name_en = ?")
-		args = append(args, req.NameEn)
+		args = append(args, name)
 	}
 
+	if !checkLengths(w, limits...) {
+		return
+	}
 	if len(sets) == 0 {
 		writeError(w, 400, "no fields to update")
 		return
@@ -153,6 +188,7 @@ func handleDeleteLocation(w http.ResponseWriter, r *http.Request) {
 	db.QueryRow("SELECT COUNT(*) FROM items WHERE location_id = ?", id).Scan(&refCount)
 	if refCount > 0 {
 		writeError(w, 400, map[string]any{
+			"code":    "LOCATION_IN_USE",
 			"message": "Location in use by " + strconv.Itoa(refCount) + " item(s)",
 			"count":   refCount,
 		})
@@ -218,6 +254,9 @@ func handleCreateOperator(w http.ResponseWriter, r *http.Request) {
 	req.DisplayName = strings.TrimSpace(req.DisplayName)
 	if req.DisplayName == "" {
 		writeError(w, 400, "Name required")
+		return
+	}
+	if !checkLengths(w, fieldLimit{"display_name", req.DisplayName, MaxOperatorLen}) {
 		return
 	}
 
@@ -297,11 +336,6 @@ func getSetting(key, defaultVal string) string {
 	return val
 }
 
-func setSetting(key, val string) error {
-	_, err := db.Exec("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", key, val)
-	return err
-}
-
 // --- purge password protection (salted hash, never stored in plaintext) ---
 
 func purgePasswordSalt() (string, error) {
@@ -335,17 +369,16 @@ func verifyPurgePassword(pw string) bool {
 
 // GET /api/settings
 func handleGetSettings(w http.ResponseWriter, r *http.Request) {
-	wVal, _ := strconv.ParseFloat(getSetting("label_width_mm", "40"), 64)
-	hVal, _ := strconv.ParseFloat(getSetting("label_height_mm", "30"), 64)
-
 	writeJSON(w, 200, SettingsResponse{
-		LabelWidthMM:     wVal,
-		LabelHeightMM:    hVal,
 		HasPurgePassword: purgePasswordConfigured(),
 	})
 }
 
 // PATCH /api/settings
+//
+// Only the purge password lives here now: the label size settings were removed
+// together with the label printer integration (the printer has its own web
+// page, so nothing in this app needs those numbers).
 func handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	var req SettingsUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -353,48 +386,59 @@ func handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.LabelWidthMM != nil {
-		db.Exec("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('label_width_mm', ?)",
-			fmt.Sprintf("%v", *req.LabelWidthMM))
-	}
-	if req.LabelHeightMM != nil {
-		db.Exec("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('label_height_mm', ?)",
-			fmt.Sprintf("%v", *req.LabelHeightMM))
+	if req.PurgePassword == nil {
+		handleGetSettings(w, r)
+		return
 	}
 
-	if req.PurgePassword != nil {
-		pw := *req.PurgePassword
-		switch {
-		case pw == "":
-			// clear protection
-			if err := setSetting("purge_password_hash", ""); err != nil {
-				writeError(w, 500, err.Error())
-				return
-			}
-			if err := setSetting("purge_password_salt", ""); err != nil {
-				writeError(w, 500, err.Error())
-				return
-			}
-		case len(pw) < 4:
+	// Validate before writing anything, then store the salt and the hash
+	// together so a rejected or interrupted update cannot leave a half-set
+	// password behind.
+	pw := strings.TrimSpace(*req.PurgePassword)
+	var salt, hash string
+	if pw != "" {
+		length := utf8.RuneCountInString(pw)
+		if length < MinPurgePasswordLen {
 			writeError(w, 400, "password too short (min 4 chars)")
 			return
-		default:
-			salt, err := purgePasswordSalt()
-			if err != nil {
-				writeError(w, 500, err.Error())
-				return
-			}
-			if err := setSetting("purge_password_salt", salt); err != nil {
-				writeError(w, 500, err.Error())
-				return
-			}
-			if err := setSetting("purge_password_hash", hashPurgePassword(pw, salt)); err != nil {
-				writeError(w, 500, err.Error())
-				return
-			}
 		}
+		if length > MaxPurgePasswordLen {
+			writeError(w, 400, "password too long (max 128 chars)")
+			return
+		}
+		var err error
+		salt, err = purgePasswordSalt()
+		if err != nil {
+			writeError(w, 500, err.Error())
+			return
+		}
+		hash = hashPurgePassword(pw, salt)
 	}
 
+	tx, err := db.Begin()
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	put := func(key, value string) error {
+		_, err := tx.Exec("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", key, value)
+		return err
+	}
+	if err := put("purge_password_salt", salt); err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	if err := put("purge_password_hash", hash); err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
 	handleGetSettings(w, r)
 }
 
@@ -521,6 +565,11 @@ func handleImport(w http.ResponseWriter, r *http.Request) {
 
 	if strings.HasSuffix(strings.ToLower(filename), ".csv") {
 		reader := csv.NewReader(strings.NewReader(string(content)))
+		// A hand-edited file often has a short row. Letting the reader enforce
+		// one width made a single missing comma reject the whole file, losing
+		// every valid row with it; missing cells now read as empty.
+		reader.FieldsPerRecord = -1
+		reader.TrimLeadingSpace = true
 		records, err = reader.ReadAll()
 		if err != nil {
 			writeError(w, 400, "invalid CSV: "+err.Error())
@@ -574,6 +623,14 @@ func handleImport(w http.ResponseWriter, r *http.Request) {
 		if nameEn == "" {
 			nameEn = nameZh
 		}
+		if msg := maxLenError("name_zh", nameZh, MaxNameLen); msg != "" {
+			errs = append(errs, fmt.Sprintf("Row %d: %s", rowNum, msg))
+			continue
+		}
+		if msg := maxLenError("name_en", nameEn, MaxNameLen); msg != "" {
+			errs = append(errs, fmt.Sprintf("Row %d: %s", rowNum, msg))
+			continue
+		}
 
 		program := strings.ToUpper(getField(row, "program"))
 		if program == "" || (program != ProgramFRC && program != ProgramFTC && program != ProgramBOTH) {
@@ -586,6 +643,10 @@ func handleImport(w http.ResponseWriter, r *http.Request) {
 		}
 
 		barcode := getField(row, "barcode")
+		if msg := maxLenError("barcode", barcode, MaxBarcodeLen); msg != "" {
+			errs = append(errs, fmt.Sprintf("Row %d: %s", rowNum, msg))
+			continue
+		}
 		if barcode == "" {
 			// Query inside the transaction: sees rows inserted by this import
 			// and does not deadlock the single-connection pool.
@@ -609,25 +670,48 @@ func handleImport(w http.ResponseWriter, r *http.Request) {
 		if unit == "" {
 			unit = "pcs"
 		}
-
-		minStock, _ := strconv.Atoi(getField(row, "min_stock"))
-		if minStock < 0 {
-			minStock = 0
+		if msg := maxLenError("category", category, MaxCategoryLen); msg != "" {
+			errs = append(errs, fmt.Sprintf("Row %d: %s", rowNum, msg))
+			continue
+		}
+		if msg := maxLenError("spec", spec, MaxSpecLen); msg != "" {
+			errs = append(errs, fmt.Sprintf("Row %d: %s", rowNum, msg))
+			continue
+		}
+		if msg := maxLenError("unit", unit, MaxUnitLen); msg != "" {
+			errs = append(errs, fmt.Sprintf("Row %d: %s", rowNum, msg))
+			continue
 		}
 
-		qty, _ := strconv.Atoi(getField(row, "quantity_initial"))
-		if qty < 0 {
-			qty = 0
+		// Reject "2.5" or "abc" instead of silently storing 0: a rounded-down
+		// min_stock quietly disables that item's low-stock alert.
+		minStock, err := parseCount(getField(row, "min_stock"))
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("Row %d: min_stock %v", rowNum, err))
+			continue
+		}
+		qty, err := parseCount(getField(row, "quantity_initial"))
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("Row %d: quantity_initial %v", rowNum, err))
+			continue
 		}
 
 		note := getField(row, "note")
+		if msg := maxLenError("note", note, MaxNoteLen); msg != "" {
+			errs = append(errs, fmt.Sprintf("Row %d: %s", rowNum, msg))
+			continue
+		}
 
 		// Resolve location
 		var locationID *int
 		locCode := getField(row, "location_code")
+		if msg := maxLenError("location_code", locCode, MaxCodeLen); msg != "" {
+			errs = append(errs, fmt.Sprintf("Row %d: %s", rowNum, msg))
+			continue
+		}
 		if locCode != "" {
 			var lid int
-			err := tx.QueryRow("SELECT id FROM locations WHERE code = ?", locCode).Scan(&lid)
+			err := tx.QueryRow("SELECT id FROM locations WHERE code = ? COLLATE NOCASE", locCode).Scan(&lid)
 			if err != nil {
 				res, err := tx.Exec("INSERT INTO locations (code, name_zh, name_en) VALUES (?, ?, ?)", locCode, locCode, locCode)
 				if err != nil {

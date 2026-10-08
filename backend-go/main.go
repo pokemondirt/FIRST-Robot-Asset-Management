@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -86,13 +87,43 @@ func main() {
 	}
 
 	// Apply middleware
-	handler := loggingMiddleware(corsMiddleware(mux))
+	handler := loggingMiddleware(guardMiddleware(mux))
 
-	port := ":8000"
+	// Listening on every interface is deliberate: other computers on the LAN
+	// are meant to open the app from their own browser. Only 127.0.0.1 is
+	// printed by http.ListenAndServe's own messages, so log the real addresses.
+	const port = ":8000"
 	log.Printf("Server starting on http://127.0.0.1%s", port)
+	for _, ip := range localIPv4s() {
+		log.Printf("  On this network: http://%s%s/#/checkout", ip, port)
+	}
 	if err := http.ListenAndServe(port, handler); err != nil {
 		log.Fatalf("server: %v", err)
 	}
+}
+
+// localIPv4s returns the machine's non-loopback IPv4 addresses, so the startup
+// log can tell the operator which URL to share on the local network.
+func localIPv4s() []string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, a := range addrs {
+		ipNet, ok := a.(*net.IPNet)
+		if !ok || ipNet.IP.IsLoopback() {
+			continue
+		}
+		ip4 := ipNet.IP.To4()
+		// Skip IPv6 and the 169.254.x.x self-assigned addresses, which a
+		// disconnected adapter reports and nobody can connect to.
+		if ip4 == nil || ip4.IsLinkLocalUnicast() {
+			continue
+		}
+		out = append(out, ip4.String())
+	}
+	return out
 }
 
 func indexExists(dist string) bool {

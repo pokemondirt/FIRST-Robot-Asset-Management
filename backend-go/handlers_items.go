@@ -53,8 +53,11 @@ func handleListItems(w http.ResponseWriter, r *http.Request) {
 		page = 1
 	}
 	pageSize, _ := strconv.Atoi(q.Get("page_size"))
-	if pageSize < 1 || pageSize > 200 {
+	if pageSize < 1 {
 		pageSize = 50
+	}
+	if pageSize > maxPageSize {
+		pageSize = maxPageSize
 	}
 	program := q.Get("program")
 	category := q.Get("category")
@@ -80,9 +83,11 @@ func handleListItems(w http.ResponseWriter, r *http.Request) {
 		args = append(args, trackMode)
 	}
 	if search != "" {
-		like := "%" + search + "%"
-		where += " AND (i.barcode LIKE ? OR i.name_zh LIKE ? OR i.name_en LIKE ?)"
-		args = append(args, like, like, like)
+		// ESCAPE keeps % and _ in the user's text literal instead of letting
+		// them match every row.
+		where += ` AND (i.barcode LIKE ? ESCAPE '\' OR i.name_zh LIKE ? ESCAPE '\' OR i.name_en LIKE ? ESCAPE '\')`
+		pattern := likePattern(search)
+		args = append(args, pattern, pattern, pattern)
 	}
 
 	var total int
@@ -152,6 +157,18 @@ func handleCreateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Trim before validating: a barcode stored as "  ABC  " can never be found
+	// again, because lookups trim the scanned code.
+	req.Barcode = strings.TrimSpace(req.Barcode)
+	req.Program = strings.TrimSpace(req.Program)
+	req.TrackMode = strings.TrimSpace(req.TrackMode)
+	req.NameZh = strings.TrimSpace(req.NameZh)
+	req.NameEn = strings.TrimSpace(req.NameEn)
+	req.Category = strings.TrimSpace(req.Category)
+	req.Spec = strings.TrimSpace(req.Spec)
+	req.Unit = strings.TrimSpace(req.Unit)
+	req.Note = strings.TrimSpace(req.Note)
+
 	if req.Program == "" {
 		req.Program = ProgramBOTH
 	} else if !validProgram(req.Program) {
@@ -179,6 +196,31 @@ func handleCreateItem(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.NameEn == "" {
 		req.NameEn = req.NameZh
+	}
+	if req.MinStock < 0 {
+		writeError(w, 400, "min_stock cannot be negative")
+		return
+	}
+	if req.QuantityInit < 0 {
+		writeError(w, 400, "quantity_initial cannot be negative")
+		return
+	}
+	if !checkLengths(w,
+		fieldLimit{"barcode", req.Barcode, MaxBarcodeLen},
+		fieldLimit{"name_zh", req.NameZh, MaxNameLen},
+		fieldLimit{"name_en", req.NameEn, MaxNameLen},
+		fieldLimit{"category", req.Category, MaxCategoryLen},
+		fieldLimit{"spec", req.Spec, MaxSpecLen},
+		fieldLimit{"unit", req.Unit, MaxUnitLen},
+		fieldLimit{"note", req.Note, MaxNoteLen},
+	) {
+		return
+	}
+	if req.LocationID != nil {
+		if msg := checkLocationExists(db, *req.LocationID); msg != "" {
+			writeError(w, 400, msg)
+			return
+		}
 	}
 
 	active := 1
@@ -257,6 +299,59 @@ func handleUpdateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Load the current row first. This both proves the item exists (so patching
+	// a missing id is a 404 instead of the misleading "no fields to update")
+	// and supplies the values used to detect a program/mode change.
+	var curProgram, curMode string
+	if err := db.QueryRow("SELECT program, track_mode FROM items WHERE id = ?", id).Scan(&curProgram, &curMode); err != nil {
+		writeError(w, 404, "Item not found")
+		return
+	}
+
+	trimmed := func(p *string) *string {
+		if p == nil {
+			return nil
+		}
+		v := strings.TrimSpace(*p)
+		return &v
+	}
+	req.NameZh = trimmed(req.NameZh)
+	req.NameEn = trimmed(req.NameEn)
+	req.Category = trimmed(req.Category)
+	req.Spec = trimmed(req.Spec)
+	req.Unit = trimmed(req.Unit)
+	req.Note = trimmed(req.Note)
+
+	if req.NameZh != nil && *req.NameZh == "" && (req.NameEn == nil || *req.NameEn == "") {
+		writeError(w, 400, "name_zh or name_en required")
+		return
+	}
+	if req.MinStock != nil && *req.MinStock < 0 {
+		writeError(w, 400, "min_stock cannot be negative")
+		return
+	}
+	if req.LocationID.Set && !req.LocationID.NullValue() {
+		if msg := checkLocationExists(db, req.LocationID.Value); msg != "" {
+			writeError(w, 400, msg)
+			return
+		}
+	}
+	stringLimits := []fieldLimit{}
+	addLimit := func(field string, p *string, max int) {
+		if p != nil {
+			stringLimits = append(stringLimits, fieldLimit{field, *p, max})
+		}
+	}
+	addLimit("name_zh", req.NameZh, MaxNameLen)
+	addLimit("name_en", req.NameEn, MaxNameLen)
+	addLimit("category", req.Category, MaxCategoryLen)
+	addLimit("spec", req.Spec, MaxSpecLen)
+	addLimit("unit", req.Unit, MaxUnitLen)
+	addLimit("note", req.Note, MaxNoteLen)
+	if !checkLengths(w, stringLimits...) {
+		return
+	}
+
 	sets := []string{}
 	args := []any{}
 	if req.Program != nil {
@@ -270,8 +365,6 @@ func handleUpdateItem(w http.ResponseWriter, r *http.Request) {
 	// Regenerate the barcode whenever program or track_mode actually changes,
 	// using the NEW values so the barcode prefix always matches the item.
 	if req.Program != nil || req.TrackMode != nil {
-		var curProgram, curMode string
-		db.QueryRow("SELECT program, track_mode FROM items WHERE id = ?", id).Scan(&curProgram, &curMode)
 		newProgram, newMode := curProgram, curMode
 		changed := false
 		if req.Program != nil && *req.Program != curProgram {

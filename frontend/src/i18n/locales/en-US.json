@@ -5,23 +5,15 @@
   },
   "nav": {
     "checkout": "Check In/Out",
-    "out": "Check Out",
-    "in": "Check In",
-    "return": "Return",
-    "query": "Lookup",
     "items": "Items",
     "history": "History",
     "board": "Dashboard",
     "settings": "Settings"
   },
   "scan": {
-    "placeholder": "Scan barcode and press Enter",
-    "confirm": "Confirm",
     "quantity": "Quantity",
     "operator": "Operator",
     "note": "Note",
-    "success": "Success",
-    "remaining": "Stock left",
     "unknown": "Unknown barcode",
     "selectOperator": "Select operator"
   },
@@ -49,6 +41,7 @@
     "category": "Category",
     "stock": "Stock",
     "minStock": "Min stock",
+    "unit": "Unit",
     "location": "Location",
     "snp": "Serialized (SNP)",
     "blk": "Bulk (BLK)"
@@ -61,15 +54,12 @@
     "template": "Download template"
   },
   "settings": {
-    "labelSize": "Label size (mm)",
-    "width": "Width",
-    "height": "Height",
-    "printerHint": "Select printer PQ00 (PUQU) when printing",
     "backup": "Backup database",
     "stats": "Statistics",
     "totalItems": "Item types",
     "lowStock": "Low stock",
-    "language": "Language"
+    "locationInUse": "{count} item(s) still use this location — reassign them first",
+    "categoryInUse": "{count} item(s) still use this category — reassign them first"
   },
   "board": {
     "title": "Warehouse Board",
@@ -101,7 +91,6 @@
     "saved": "Saved",
     "cancel": "Cancel",
     "delete": "Deactivate",
-    "loading": "Loading…",
-    "error": "Error"
+    "loading": "Loading…"
   }
 }

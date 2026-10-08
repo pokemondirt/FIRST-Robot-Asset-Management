@@ -45,6 +45,20 @@ func handleCreateTransaction(w http.ResponseWriter, r *http.Request) {
 		req.Quantity = 1
 	}
 
+	// A zero/negative operator id means "no operator"; anything else must name
+	// an existing, still active operator. Without this a deleted operator id
+	// silently recorded an anonymous movement.
+	opID := req.OperatorID
+	if opID != nil && *opID <= 0 {
+		opID = nil
+	}
+	if opID != nil {
+		if msg := checkOperatorActive(db, *opID); msg != "" {
+			writeError(w, 400, msg)
+			return
+		}
+	}
+
 	// Find item
 	var (
 		itemID    int
@@ -130,7 +144,7 @@ func handleCreateTransaction(w http.ResponseWriter, r *http.Request) {
 	result, err := tx.Exec(`
 		INSERT INTO transactions (type, item_id, quantity, operator_id, note, created_at)
 		VALUES (?, ?, ?, ?, ?, ?)
-	`, req.Type, itemID, qty, req.OperatorID, strings.TrimSpace(req.Note), nowSQL())
+	`, req.Type, itemID, qty, opID, strings.TrimSpace(req.Note), nowSQL())
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return
@@ -160,8 +174,11 @@ func handleListTransactions(w http.ResponseWriter, r *http.Request) {
 		page = 1
 	}
 	pageSize, _ := strconv.Atoi(q.Get("page_size"))
-	if pageSize < 1 || pageSize > 200 {
+	if pageSize < 1 {
 		pageSize = 50
+	}
+	if pageSize > maxPageSize {
+		pageSize = maxPageSize
 	}
 	itemIDStr := q.Get("item_id")
 	txType := q.Get("type")
@@ -186,7 +203,10 @@ func handleListTransactions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	selectArgs := append(args, pageSize, (page-1)*pageSize)
-	rows, err := db.Query(txSelectSQL+where+` ORDER BY t.created_at DESC LIMIT ? OFFSET ?`, selectArgs...)
+	// created_at only has second precision, so a batch import or a busy second
+	// leaves many rows tied. Falling back to id keeps LIMIT/OFFSET paging
+	// stable instead of allowing rows to repeat or go missing across pages.
+	rows, err := db.Query(txSelectSQL+where+` ORDER BY t.created_at DESC, t.id DESC LIMIT ? OFFSET ?`, selectArgs...)
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return
@@ -224,6 +244,17 @@ func handleBatchTransactions(w http.ResponseWriter, r *http.Request) {
 	if len(req.Lines) == 0 {
 		writeError(w, 400, map[string]string{"code": "EMPTY_LINES", "message": "No transaction lines provided"})
 		return
+	}
+
+	opID := req.OperatorID
+	if opID != nil && *opID <= 0 {
+		opID = nil
+	}
+	if opID != nil {
+		if msg := checkOperatorActive(db, *opID); msg != "" {
+			writeError(w, 400, msg)
+			return
+		}
 	}
 
 	dbTx, err := db.Begin()
@@ -293,7 +324,7 @@ func handleBatchTransactions(w http.ResponseWriter, r *http.Request) {
 		result, err := dbTx.Exec(`
 			INSERT INTO transactions (type, item_id, quantity, operator_id, note, created_at)
 			VALUES (?, ?, ?, ?, ?, ?)
-		`, line.Type, itemID, qty, req.OperatorID, strings.TrimSpace(req.Note), nowSQL())
+		`, line.Type, itemID, qty, opID, strings.TrimSpace(req.Note), nowSQL())
 		if err != nil {
 			errorLines = append(errorLines, line)
 			continue

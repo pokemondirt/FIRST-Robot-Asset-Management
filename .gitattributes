@@ -1,0 +1,9 @@
+# Normalise line endings so contributors on macOS/Linux do not create
+# whole-file diffs against a Windows checkout.
+#
+# Sources are stored as LF. The Windows launchers keep CRLF so they behave
+# correctly in cmd.exe and in Notepad.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

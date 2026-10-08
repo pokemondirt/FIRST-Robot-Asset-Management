@@ -5,23 +5,15 @@
   },
   "nav": {
     "checkout": "出入库",
-    "out": "出库",
-    "in": "入库",
-    "return": "归还",
-    "query": "查询",
     "items": "物资",
     "history": "流水",
     "board": "展板",
     "settings": "设置"
   },
   "scan": {
-    "placeholder": "扫码或输入条码后回车",
-    "confirm": "确认",
     "quantity": "数量",
     "operator": "操作人",
     "note": "备注",
-    "success": "操作成功",
-    "remaining": "剩余库存",
     "unknown": "未识别条码",
     "selectOperator": "请选择操作人"
   },
@@ -49,6 +41,7 @@
     "category": "分类",
     "stock": "库存",
     "minStock": "最低库存",
+    "unit": "单位",
     "location": "库位",
     "snp": "单品(SNP)",
     "blk": "批量(BLK)"
@@ -61,15 +54,12 @@
     "template": "下载模板"
   },
   "settings": {
-    "labelSize": "标签尺寸 (mm)",
-    "width": "宽",
-    "height": "高",
-    "printerHint": "打印时请选择打印机 PQ00（璞趣）",
     "backup": "备份数据库",
     "stats": "统计",
     "totalItems": "物资种类",
     "lowStock": "低库存",
-    "language": "语言"
+    "locationInUse": "该库位仍被 {count} 种物资使用，请先改掉这些物资的库位",
+    "categoryInUse": "该分类仍被 {count} 种物资使用，请先改掉这些物资的分类"
   },
   "board": {
     "title": "仓库展板",
@@ -101,7 +91,6 @@
     "saved": "已保存",
     "cancel": "取消",
     "delete": "停用",
-    "loading": "加载中…",
-    "error": "错误"
+    "loading": "加载中…"
   }
 }

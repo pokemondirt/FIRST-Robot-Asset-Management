@@ -85,31 +85,33 @@ type AppSetting struct {
 // --- Request / Response ---
 
 type ItemCreateRequest struct {
-	Barcode        string `json:"barcode"`
-	Program        string `json:"program"`
-	TrackMode      string `json:"track_mode"`
-	NameZh         string `json:"name_zh"`
-	NameEn         string `json:"name_en"`
-	Category       string `json:"category"`
-	Spec           string `json:"spec"`
-	Unit           string `json:"unit"`
-	MinStock       int    `json:"min_stock"`
-	LocationID     *int   `json:"location_id"`
-	Note           string `json:"note"`
-	Active         *bool  `json:"active"`
-	QuantityInit   int    `json:"quantity_initial"`
+	Barcode      string `json:"barcode"`
+	Program      string `json:"program"`
+	TrackMode    string `json:"track_mode"`
+	NameZh       string `json:"name_zh"`
+	NameEn       string `json:"name_en"`
+	Category     string `json:"category"`
+	Spec         string `json:"spec"`
+	Unit         string `json:"unit"`
+	MinStock     int    `json:"min_stock"`
+	LocationID   *int   `json:"location_id"`
+	Note         string `json:"note"`
+	Active       *bool  `json:"active"`
+	QuantityInit int    `json:"quantity_initial"`
 }
 
 // OptionalInt distinguishes "field absent" from an explicit null/zero in
 // PATCH requests, so callers can clear a value (e.g. location_id -> NULL).
 type OptionalInt struct {
-	Set   bool
-	Value int
+	Set    bool
+	Value  int
+	IsNull bool
 }
 
 func (o *OptionalInt) UnmarshalJSON(b []byte) error {
 	if string(b) == "null" {
 		o.Set = true
+		o.IsNull = true
 		o.Value = 0
 		return nil
 	}
@@ -118,25 +120,28 @@ func (o *OptionalInt) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	o.Set = true
+	o.IsNull = false
 	o.Value = v
 	return nil
 }
 
-// NullValue reports whether the field was explicitly set to null.
-func (o *OptionalInt) NullValue() bool { return o.Set && o.Value == 0 }
+// NullValue reports whether the field was explicitly set to null. Only an
+// explicit null counts: treating the number 0 as "clear" made the semantics
+// depend on an id value that simply does not exist.
+func (o *OptionalInt) NullValue() bool { return o.IsNull }
 
 type ItemUpdateRequest struct {
-	Program    *string      `json:"program"`
-	TrackMode  *string      `json:"track_mode"`
-	NameZh     *string      `json:"name_zh"`
-	NameEn     *string      `json:"name_en"`
-	Category   *string      `json:"category"`
-	Spec       *string      `json:"spec"`
-	Unit       *string      `json:"unit"`
-	MinStock   *int         `json:"min_stock"`
-	LocationID OptionalInt  `json:"location_id"`
-	Note       *string      `json:"note"`
-	Active     *bool        `json:"active"`
+	Program    *string     `json:"program"`
+	TrackMode  *string     `json:"track_mode"`
+	NameZh     *string     `json:"name_zh"`
+	NameEn     *string     `json:"name_en"`
+	Category   *string     `json:"category"`
+	Spec       *string     `json:"spec"`
+	Unit       *string     `json:"unit"`
+	MinStock   *int        `json:"min_stock"`
+	LocationID OptionalInt `json:"location_id"`
+	Note       *string     `json:"note"`
+	Active     *bool       `json:"active"`
 }
 
 type ItemListResponse struct {
@@ -191,20 +196,28 @@ type LocationRequest struct {
 	NameEn string `json:"name_en"`
 }
 
+// LocationUpdateRequest uses pointers so a PATCH can tell "field not sent"
+// apart from "clear this value". The previous value-based check
+// (`if req.NameZh != ""`) silently ignored empty strings, so a location name
+// could never be cleared even though the API answered 200.
+type LocationUpdateRequest struct {
+	Code   *string `json:"code"`
+	NameZh *string `json:"name_zh"`
+	NameEn *string `json:"name_en"`
+}
+
 type OperatorRequest struct {
 	DisplayName string `json:"display_name"`
 }
 
 type SettingsResponse struct {
-	LabelWidthMM     float64 `json:"label_width_mm"`
-	LabelHeightMM    float64 `json:"label_height_mm"`
-	HasPurgePassword bool    `json:"has_purge_password"`
+	HasPurgePassword bool `json:"has_purge_password"`
 }
 
 type SettingsUpdateRequest struct {
-	LabelWidthMM  *float64 `json:"label_width_mm"`
-	LabelHeightMM *float64 `json:"label_height_mm"`
-	// Empty string clears the protection; <4 chars is rejected.
+	// Blank (after trimming) clears the protection; shorter than 4 characters
+	// or longer than 128 is rejected. Validation happens before anything is
+	// written.
 	PurgePassword *string `json:"purge_password"`
 }
 
@@ -277,10 +290,10 @@ type OKResponse struct {
 // --- Categories ---
 
 type Category struct {
-	ID       int    `json:"id"`
-	NameZh   string `json:"name_zh"`
-	NameEn   string `json:"name_en"`
-	SortOrder int   `json:"sort_order"`
+	ID        int    `json:"id"`
+	NameZh    string `json:"name_zh"`
+	NameEn    string `json:"name_en"`
+	SortOrder int    `json:"sort_order"`
 }
 
 type CategoryRequest struct {

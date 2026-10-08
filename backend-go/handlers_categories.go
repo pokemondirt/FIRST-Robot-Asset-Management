@@ -44,6 +44,12 @@ func handleCreateCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.NameEn = strings.TrimSpace(req.NameEn)
+	if !checkLengths(w,
+		fieldLimit{"name_zh", req.NameZh, MaxCategoryLen},
+		fieldLimit{"name_en", req.NameEn, MaxCategoryLen},
+	) {
+		return
+	}
 
 	// Check duplicate
 	var exists int
@@ -90,6 +96,7 @@ func handleDeleteCategory(w http.ResponseWriter, r *http.Request) {
 	db.QueryRow("SELECT COUNT(*) FROM items WHERE category = ?", nameZh).Scan(&refCount)
 	if refCount > 0 {
 		writeError(w, 400, map[string]any{
+			"code":    "CATEGORY_IN_USE",
 			"message": "Category in use by " + strconv.Itoa(refCount) + " item(s)",
 			"count":   refCount,
 		})
@@ -136,6 +143,12 @@ func handleUpdateCategory(w http.ResponseWriter, r *http.Request) {
 
 	if req.NameZh == "" {
 		writeError(w, 400, "name_zh required")
+		return
+	}
+	if !checkLengths(w,
+		fieldLimit{"name_zh", req.NameZh, MaxCategoryLen},
+		fieldLimit{"name_en", req.NameEn, MaxCategoryLen},
+	) {
 		return
 	}
 

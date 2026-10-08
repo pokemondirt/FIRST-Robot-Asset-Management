@@ -9,14 +9,21 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = 50
 const typeFilter = ref('')
+const error = ref('')
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 
 async function load() {
   const params = { page: page.value, page_size: pageSize }
   if (typeFilter.value) params.type = typeFilter.value
-  const res = await api.listTransactions(params)
-  rows.value = res.transactions
-  total.value = res.total
+  try {
+    const res = await api.listTransactions(params)
+    rows.value = res.transactions
+    total.value = res.total
+  } catch (e) {
+    rows.value = []
+    total.value = 0
+    error.value = e.message
+  }
 }
 
 onMounted(load)
@@ -57,6 +64,7 @@ function name(tx) {
         <option value="ADJUST">ADJUST</option>
       </select>
     </div>
+    <p v-if="error" class="msg error">{{ error }}</p>
     <table>
       <thead>
         <tr>

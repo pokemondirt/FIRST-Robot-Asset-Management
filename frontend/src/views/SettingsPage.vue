@@ -5,7 +5,7 @@ import { api } from '../api/client'
 import { useOperators } from '../composables/useOperators'
 
 const { t, locale } = useI18n()
-const settings = ref({ label_width_mm: 40, label_height_mm: 30, has_purge_password: false })
+const settings = ref({ has_purge_password: false })
 const stats = ref(null)
 const message = ref('')
 const messageError = ref(false)
@@ -45,19 +45,15 @@ onMounted(async () => {
   }
 })
 
-async function save() {
-  settings.value = await api.updateSettings({
-    label_width_mm: settings.value.label_width_mm,
-    label_height_mm: settings.value.label_height_mm,
-  })
-  message.value = t('common.saved')
-  messageError.value = false
-}
-
 async function backup() {
-  const res = await api.backup()
-  message.value = res.filename
-  messageError.value = false
+  try {
+    const res = await api.backup()
+    message.value = res.filename
+    messageError.value = false
+  } catch (e) {
+    message.value = e.message
+    messageError.value = true
+  }
 }
 
 async function savePurgePassword() {
@@ -156,7 +152,12 @@ async function removeLocation(id) {
     message.value = '库位已删除'
     messageError.value = false
   } catch (e) {
-    message.value = e.message
+    // The API answers with a machine readable code so the reason can be shown
+    // in the current language instead of leaking the English server message.
+    message.value =
+      e.code === 'LOCATION_IN_USE'
+        ? t('settings.locationInUse', { count: e.payload?.count ?? '?' })
+        : e.message
     messageError.value = true
   }
 }
@@ -205,7 +206,10 @@ async function removeCategory(id) {
     message.value = '分类已删除'
     messageError.value = false
   } catch (e) {
-    message.value = e.message
+    message.value =
+      e.code === 'CATEGORY_IN_USE'
+        ? t('settings.categoryInUse', { count: e.payload?.count ?? '?' })
+        : e.message
     messageError.value = true
   }
 }
@@ -213,16 +217,6 @@ async function removeCategory(id) {
 
 <template>
   <div class="form-grid">
-    <div class="card">
-      <h3>{{ t('settings.labelSize') }}</h3>
-      <label>{{ t('settings.width') }}</label>
-      <input v-model.number="settings.label_width_mm" type="number" step="1" />
-      <label style="margin-top: 12px">{{ t('settings.height') }}</label>
-      <input v-model.number="settings.label_height_mm" type="number" step="1" />
-      <p style="color: var(--muted); font-size: 0.9rem">{{ t('settings.printerHint') }}</p>
-      <button type="button" style="margin-top: 12px" @click="save">{{ t('common.save') }}</button>
-    </div>
-
     <div v-if="stats" class="card">
       <h3>{{ t('settings.stats') }}</h3>
       <p>{{ t('settings.totalItems') }}: {{ stats.total_items }}</p>
