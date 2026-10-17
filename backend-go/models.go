@@ -51,6 +51,10 @@ type Item struct {
 	Note       string    `json:"note"`
 	Active     bool      `json:"active"`
 	CreatedAt  time.Time `json:"created_at"`
+	// BarcodeAuto reports whether the barcode came from the numbering scheme.
+	// When false the barcode was entered by the operator (a manufacturer code,
+	// for example) and must survive program / tracking-mode edits.
+	BarcodeAuto bool `json:"barcode_auto"`
 	// joined
 	Quantity     int     `json:"quantity"`
 	LocationCode *string `json:"location_code"`
@@ -131,6 +135,7 @@ func (o *OptionalInt) UnmarshalJSON(b []byte) error {
 func (o *OptionalInt) NullValue() bool { return o.IsNull }
 
 type ItemUpdateRequest struct {
+	Barcode    *string     `json:"barcode"`
 	Program    *string     `json:"program"`
 	TrackMode  *string     `json:"track_mode"`
 	NameZh     *string     `json:"name_zh"`

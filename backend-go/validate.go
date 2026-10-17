@@ -71,6 +71,18 @@ func checkLengths(w http.ResponseWriter, limits ...fieldLimit) bool {
 	return true
 }
 
+// checkBarcode rejects barcodes that a scanner cannot reproduce: spaces and
+// anything outside printable ASCII (a Chinese IME that leaked into the field,
+// for example).
+func checkBarcode(barcode string) string {
+	for _, r := range barcode {
+		if r < 0x21 || r > 0x7e {
+			return "barcode may only contain printable ASCII characters, without spaces"
+		}
+	}
+	return ""
+}
+
 // likePattern escapes the LIKE metacharacters so a search for "%" matches a
 // literal percent sign instead of every row. Use with `LIKE ? ESCAPE '\'`.
 func likePattern(s string) string {

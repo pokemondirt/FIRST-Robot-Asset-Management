@@ -4,6 +4,23 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>FIRST Inventory</title>
+    <!--
+      Resolve the stored theme before the app bundle loads, otherwise the page
+      paints with the default dark palette and then flashes to light.
+      The preference is "auto" | "light" | "dark"; "auto" follows the OS.
+    -->
+    <script>
+      (function () {
+        try {
+          var pref = localStorage.getItem('theme') || 'auto'
+          var light = window.matchMedia('(prefers-color-scheme: light)').matches
+          document.documentElement.dataset.theme =
+            pref === 'auto' ? (light ? 'light' : 'dark') : pref
+        } catch (e) {
+          document.documentElement.dataset.theme = 'dark'
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="app"></div>

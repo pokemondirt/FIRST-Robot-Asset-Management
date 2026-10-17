@@ -43,6 +43,15 @@ jobs:
         working-directory: backend-go
         run: go test ./... -count=1
 
+      - name: Embed frontend into the Go module
+        run: |
+          set -euo pipefail
+          # main.go embeds backend-go/webembed/dist, so the UI ships inside the
+          # executable and the release package is a single file.
+          mkdir -p backend-go/webembed/dist
+          find backend-go/webembed/dist -mindepth 1 ! -name .gitkeep -delete
+          cp -r frontend/dist/. backend-go/webembed/dist/
+
       - name: Package every target
         run: |
           set -euo pipefail
@@ -62,7 +71,7 @@ jobs:
 
             ( cd backend-go && CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
                 go build -trimpath -ldflags "-s -w" -o "../$stage/$exe" . )
-            cp -r frontend/dist "$stage/dist"
+            # No dist folder: the UI is embedded in the executable.
             # MIT requires the licence text to travel with every copy.
             cp LICENSE "$stage/"
 

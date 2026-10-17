@@ -54,7 +54,7 @@ func handleCreateTransaction(w http.ResponseWriter, r *http.Request) {
 	}
 	if opID != nil {
 		if msg := checkOperatorActive(db, *opID); msg != "" {
-			writeError(w, 400, msg)
+			writeError(w, 400, map[string]any{"code": "OPERATOR_INVALID", "message": msg})
 			return
 		}
 	}
@@ -109,9 +109,13 @@ func handleCreateTransaction(w http.ResponseWriter, r *http.Request) {
 	switch req.Type {
 	case TxOut:
 		if currentQty < qty {
-			writeError(w, 400, map[string]string{
+			// have/need are structured so the UI can phrase the message in the
+			// operator's language instead of showing the English text.
+			writeError(w, 400, map[string]any{
 				"code":    "INSUFFICIENT_STOCK",
 				"message": "Insufficient stock (have " + strconv.Itoa(currentQty) + ", need " + strconv.Itoa(qty) + ")",
+				"have":    currentQty,
+				"need":    qty,
 			})
 			return
 		}
@@ -252,7 +256,7 @@ func handleBatchTransactions(w http.ResponseWriter, r *http.Request) {
 	}
 	if opID != nil {
 		if msg := checkOperatorActive(db, *opID); msg != "" {
-			writeError(w, 400, msg)
+			writeError(w, 400, map[string]any{"code": "OPERATOR_INVALID", "message": msg})
 			return
 		}
 	}

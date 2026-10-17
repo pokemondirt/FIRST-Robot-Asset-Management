@@ -1,49 +1,75 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, playBeep } from '../api/client'
 import { useOperators } from '../composables/useOperators'
-import GuideSidebar from '../components/GuideSidebar.vue'
 
 const { t, locale } = useI18n()
 const { operators, loadOperators } = useOperators()
-const scanRef = ref(null)
-const code = ref('')
+
+// ---------------------------------------------------------------- state
+
+// Returning an item is just checking it back in, so the UI only offers these
+// two operations. The API still accepts RETURN for rows created by older
+// versions; they keep rendering in the history list.
+const MODES = [
+  { value: 'IN', labelKey: 'batch.in', cls: 'mode-in' },
+  { value: 'OUT', labelKey: 'batch.out', cls: 'mode-out' },
+]
+// The working mode is the missing piece of the old flow: a warehouse decides
+// "I am receiving" or "I am issuing" once, then every scan applies at once.
+const mode = ref(localStorage.getItem('opMode') || 'OUT')
 const operatorId = ref(null)
+const quantity = ref(1)
 const note = ref('')
-const message = ref('')
-const messageOk = ref(true)
-const loading = ref(false)
-const submitting = ref(false)
 
-// Cart lines: each has barcode, item info, type, quantity
-const lines = ref([])
-const nextId = ref(1)
-const selectedIds = ref(new Set())
+const code = ref('')
+const busy = ref(false)
+const scanRef = ref(null)
 
-function toggleSelect(id) {
-  const s = new Set(selectedIds.value)
-  s.has(id) ? s.delete(id) : s.add(id)
-  selectedIds.value = s
+// Barcode scanners behave like keyboards, so a Chinese IME swallows the scan
+// into a pinyin composition and Enter never reaches us. A web page cannot
+// change the OS input method, but it can throw the composed text away instead
+// of turning it into a bogus lookup.
+const imeState = ref('idle') // 'idle' | 'warn'
+
+// A web page cannot change the operating system's input method. What it can do
+// is publish "the barcode box is focused" through the window title, which the
+// optional helper in scripts/ime/ watches to switch the IME to English. The
+// marker is a zero-width space, so the visible tab title does not change.
+const BASE_TITLE = typeof document !== 'undefined' ? document.title : ''
+const IME_MARKER = '\u200B'
+
+function setScanFocus(focused) {
+  if (typeof document === 'undefined') return
+  document.title = focused ? IME_MARKER + BASE_TITLE : BASE_TITLE
 }
 
-function toggleSelectAll() {
-  if (selectedIds.value.size === lines.value.length) {
-    selectedIds.value = new Set()
-  } else {
-    selectedIds.value = new Set(lines.value.map(l => l.id))
+const current = ref(null) // last scanned item, refreshed after each movement
+const ops = ref([]) // this session, newest first
+const errorText = ref('')
+const okText = ref('')
+
+let refocusTimer = null
+
+const modeLabel = computed(
+  () => t(MODES.find((m) => m.value === mode.value)?.labelKey || 'batch.out'),
+)
+const modeClass = computed(
+  () => MODES.find((m) => m.value === mode.value)?.cls || 'mode-out',
+)
+
+const totals = computed(() => {
+  const s = { IN: 0, OUT: 0, count: 0 }
+  for (const op of ops.value) {
+    if (op.undone) continue
+    s[op.type] = (s[op.type] || 0) + op.quantity
+    s.count += 1
   }
-}
+  return s
+})
 
-function batchSetType(type) {
-  const count = selectedIds.value.size
-  for (const id of selectedIds.value) {
-    setLineType(id, type)
-  }
-  selectedIds.value = new Set()
-  message.value = `${count} ${locale.value === 'zh-CN' ? '种' : 'items'} → ${typeLabel(type)}`
-  messageOk.value = true
-}
+// ---------------------------------------------------------------- helpers
 
 function displayName(item) {
   if (!item) return ''
@@ -52,626 +78,634 @@ function displayName(item) {
     : item.name_en || item.name_zh
 }
 
-function typeLabel(type) {
-  if (type === 'OUT') return t('batch.out')
-  if (type === 'IN') return t('batch.in')
-  if (type === 'RETURN') return t('batch.return')
-  return type
+function focusScan() {
+  setTimeout(() => scanRef.value?.focus(), 30)
 }
 
-const summary = computed(() => {
-  const s = { out: 0, in: 0, return: 0, outCount: 0, inCount: 0, returnCount: 0 }
-  for (const line of lines.value) {
-    if (line.type === 'OUT') { s.out += line.quantity; s.outCount++ }
-    if (line.type === 'IN') { s.in += line.quantity; s.inCount++ }
-    if (line.type === 'RETURN') { s.return += line.quantity; s.returnCount++ }
+function applyError(e) {
+  switch (e?.code) {
+    case 'NOT_FOUND':
+      return t('scan.unknown')
+    case 'INSUFFICIENT_STOCK':
+      return t('op.insufficient', {
+        have: e.payload?.have ?? '?',
+        need: e.payload?.need ?? '?',
+      })
+    case 'INVALID_QUANTITY':
+      return t('op.invalidQty')
+    case 'OPERATOR_INVALID':
+      return t('op.operatorInvalid')
+    case 'INVALID_TYPE':
+      return t('op.invalidType')
+    default:
+      return e?.message || String(e)
   }
-  return s
-})
+}
+
+function setMode(next) {
+  mode.value = next
+  localStorage.setItem('opMode', next)
+  focusScan()
+}
+
+// ---------------------------------------------------------------- IME guard
+
+// Any character outside printable ASCII means the IME was active (CJK text or
+// full-width letters/digits). A barcode never contains those.
+const NON_ASCII = /[^\x20-\x7e]/
+let composing = false
+
+function warnIme() {
+  imeState.value = 'warn'
+  okText.value = ''
+  code.value = ''
+  playBeep(false)
+}
+
+function onCompositionStart() {
+  // Fires as soon as the IME starts a composition: drop whatever it produces.
+  composing = true
+  imeState.value = 'warn'
+}
+
+function onCompositionEnd() {
+  // The composition text is pinyin/Chinese; never let it reach the server.
+  composing = false
+  warnIme()
+  focusScan()
+}
+
+function onCodeInput(e) {
+  // Read the DOM value directly: it is correct regardless of whether v-model
+  // has already written the new value into `code`.
+  const value = e?.target?.value ?? code.value
+  if (composing) return // pinyin is ASCII, so ignore it until the composition ends
+  if (NON_ASCII.test(value)) {
+    warnIme()
+    return
+  }
+  // Plain ASCII after a warning means the operator switched back to English.
+  if (value) imeState.value = 'idle'
+}
+
+// ---------------------------------------------------------------- actions
+
+async function onScan() {
+  const raw = code.value.trim()
+  if (!raw || busy.value) return
+  errorText.value = ''
+  okText.value = ''
+
+  if (NON_ASCII.test(raw)) {
+    warnIme()
+    return
+  }
+
+  if (!operatorId.value) {
+    errorText.value = t('op.scanBlocked')
+    playBeep(false)
+    return
+  }
+
+  busy.value = true
+  try {
+    // Look the code up first: an unknown barcode and a rejected movement need
+    // different messages, and the item tells us whether the quantity is fixed.
+    const found = await api.lookup(raw)
+    if (found.kind !== 'item' || !found.item) {
+      const err = new Error(t('scan.unknown'))
+      err.code = 'NOT_FOUND'
+      throw err
+    }
+    const item = found.item
+    const qty = item.track_mode === 'SNP' ? 1 : Math.max(1, Number(quantity.value) || 1)
+
+    const tx = await api.createTransaction({
+      barcode: item.barcode,
+      type: mode.value,
+      quantity: qty,
+      operator_id: operatorId.value,
+      note: note.value,
+    })
+
+    // Re-read the item so the stock shown is the post-movement value.
+    let fresh = item
+    try {
+      const after = await api.lookup(item.barcode)
+      if (after.kind === 'item' && after.item) fresh = after.item
+    } catch (_) {}
+    current.value = fresh
+
+    ops.value.unshift({
+      id: tx.id,
+      type: tx.type,
+      barcode: tx.barcode,
+      name: displayName(fresh),
+      unit: fresh.unit,
+      quantity: tx.quantity,
+      at: new Date(),
+      undone: false,
+    })
+    if (ops.value.length > 60) ops.value.length = 60
+
+    okText.value = `${t('op.done')} · ${displayName(fresh)} ${tx.quantity}${fresh.unit || ''}`
+    playBeep(true)
+    code.value = ''
+    quantity.value = 1
+    imeState.value = 'idle'
+  } catch (e) {
+    errorText.value = applyError(e)
+    playBeep(false)
+  } finally {
+    busy.value = false
+    focusScan()
+  }
+}
+
+const INVERSE = { IN: 'OUT', OUT: 'IN' }
+
+async function undo(op) {
+  if (op.undone || !INVERSE[op.type]) return
+  errorText.value = ''
+  okText.value = ''
+  try {
+    await api.createTransaction({
+      barcode: op.barcode,
+      type: INVERSE[op.type],
+      quantity: op.quantity,
+      operator_id: operatorId.value,
+      note: `撤销 #${op.id}`,
+    })
+    op.undone = true
+    okText.value = t('op.undone')
+    if (current.value?.barcode === op.barcode) {
+      try {
+        const after = await api.lookup(op.barcode)
+        if (after.kind === 'item' && after.item) current.value = after.item
+      } catch (_) {}
+    }
+  } catch (e) {
+    errorText.value = applyError(e)
+  }
+  focusScan()
+}
+
+function clearSession() {
+  ops.value = []
+  okText.value = ''
+  errorText.value = ''
+  focusScan()
+}
+
+// ---------------------------------------------------------------- lifecycle
 
 onMounted(async () => {
   await loadOperators()
   const saved = localStorage.getItem('operatorId')
   if (saved) {
     const id = Number(saved)
-    if (operators.value.some((o) => o.id === id)) {
-      operatorId.value = id
-    }
+    if (operators.value.some((o) => o.id === id)) operatorId.value = id
   }
   focusScan()
+  // A scanner gun types wherever focus happens to be. Recover an idle focus so
+  // a scan is never silently lost after clicking a button or a table row.
+  refocusTimer = setInterval(() => {
+    if (document.activeElement === document.body) focusScan()
+  }, 700)
+})
+
+onUnmounted(() => {
+  if (refocusTimer) clearInterval(refocusTimer)
+  if (typeof document !== 'undefined') document.title = BASE_TITLE
 })
 
 watch(operatorId, (v) => {
   if (v) localStorage.setItem('operatorId', String(v))
+  focusScan()
 })
-
-function focusScan() {
-  setTimeout(() => scanRef.value?.focus(), 50)
-}
-
-async function onScanEnter() {
-  const raw = code.value.trim()
-  if (!raw) return
-  message.value = ''
-  loading.value = true
-  try {
-    const res = await api.lookup(raw)
-    if (res.kind !== 'item' || !res.item) {
-      message.value = t('scan.unknown')
-      messageOk.value = false
-      playBeep(false)
-      code.value = ''
-      focusScan()
-      return
-    }
-    const item = res.item
-
-    // Check if already in cart
-    const existing = lines.value.find(l => l.barcode === item.barcode)
-    if (existing) {
-      if (item.track_mode === 'SNP') {
-        // Serialized parts are always one unit; adding another scan would show
-        // a quantity the picker cannot correct (the input is disabled).
-        existing.quantity = 1
-        message.value = `${displayName(item)} ×1 (SNP)`
-      } else {
-        existing.quantity++
-        message.value = `${displayName(item)} +1 → ${existing.quantity}`
-      }
-      messageOk.value = true
-      playBeep(true)
-    } else {
-      // Default type: if item is checked out to someone, default to RETURN; otherwise OUT
-      const defaultType = 'OUT'
-      lines.value.push({
-        id: nextId.value++,
-        barcode: item.barcode,
-        item: item,
-        type: defaultType,
-        quantity: 1,
-      })
-      message.value = `${t('batch.added')}: ${displayName(item)}`
-      messageOk.value = true
-      playBeep(true)
-    }
-    code.value = ''
-    focusScan()
-  } catch (e) {
-    message.value = e.message
-    messageOk.value = false
-    playBeep(false)
-  } finally {
-    loading.value = false
-  }
-}
-
-function removeLine(id) {
-  lines.value = lines.value.filter(l => l.id !== id)
-}
-
-function setLineType(id, type) {
-  const line = lines.value.find(l => l.id === id)
-  if (line) line.type = type
-}
-
-function setLineQty(id, qty) {
-  const line = lines.value.find(l => l.id === id)
-  if (!line) return
-  if (line.item.track_mode === 'SNP') {
-    line.quantity = 1
-    return
-  }
-  const v = parseInt(qty, 10)
-  if (!isNaN(v) && v >= 1) {
-    line.quantity = v
-  }
-}
-
-// Validation per line
-function lineValid(line) {
-  if (line.type === 'OUT' && line.item.quantity < line.quantity) return false
-  return true
-}
-
-function lineError(line) {
-  if (line.type === 'OUT' && line.item.quantity < line.quantity) {
-    return t('batch.insufficient', { have: line.item.quantity, need: line.quantity })
-  }
-  return ''
-}
-
-const allValid = computed(() => lines.value.length > 0 && lines.value.every(lineValid))
-
-async function confirmAll() {
-  if (lines.value.length === 0) return
-  if (!operatorId.value) {
-    message.value = t('scan.selectOperator')
-    messageOk.value = false
-    return
-  }
-  if (!allValid.value) return
-
-  submitting.value = true
-  message.value = ''
-  try {
-    const result = await api.batchCreateTransactions({
-      operator_id: operatorId.value,
-      note: note.value,
-      lines: lines.value.map(l => ({
-        barcode: l.barcode,
-        type: l.type,
-        quantity: l.quantity,
-      })),
-    })
-
-    const ok = result.transactions?.length || 0
-    const err = result.errors?.length || 0
-
-    if (err > 0 && ok === 0) {
-      message.value = t('batch.allFailed')
-      messageOk.value = false
-      playBeep(false)
-    } else if (err > 0) {
-      message.value = t('batch.partialSuccess', { ok, err })
-      messageOk.value = false
-      playBeep(false)
-      // Remove succeeded lines from cart, keep errors
-      const errorBarcodes = new Set(result.errors.map(e => e.barcode))
-      lines.value = lines.value.filter(l => errorBarcodes.has(l.barcode))
-    } else {
-      message.value = t('batch.allSuccess', { count: ok })
-      messageOk.value = true
-      playBeep(true)
-      lines.value = []
-      note.value = ''
-      selectedIds.value = new Set()
-    }
-    focusScan()
-  } catch (e) {
-    // A request where every line failed comes back as a 400, so map its code
-    // back to the localized message instead of showing the server's English.
-    message.value = e.code === 'ALL_FAILED' ? t('batch.allFailed') : e.message
-    messageOk.value = false
-    playBeep(false)
-  } finally {
-    submitting.value = false
-  }
-}
-
-function clearAll() {
-  lines.value = []
-  note.value = ''
-  message.value = ''
-  selectedIds.value = new Set()
-}
 </script>
 
 <template>
-  <div class="batch-layout">
-    <GuideSidebar />
+  <div class="op">
+    <!-- toolbar: mode, operator, quantity, note -->
+    <div class="card op-bar">
+      <div class="op-field">
+        <label>{{ t('op.mode') }}</label>
+        <div class="segmented">
+          <button
+            v-for="m in MODES"
+            :key="m.value"
+            type="button"
+            :class="[m.cls, { active: mode === m.value }]"
+            @click="setMode(m.value)"
+          >
+            {{ t(m.labelKey) }}
+          </button>
+        </div>
+      </div>
 
-    <div class="batch-main">
-    <!-- Scan bar -->
-    <div class="scan-bar">
-      <input
-        ref="scanRef"
-        v-model="code"
-        class="scan-input"
-        type="text"
-        autocomplete="off"
-        :placeholder="t('batch.scanPlaceholder')"
-        @keydown.enter.prevent="onScanEnter"
-      />
-    </div>
-
-    <!-- Operator & note -->
-    <div class="meta-row">
-      <div class="meta-item">
-        <label>{{ t('scan.operator') }}</label>
-        <select v-model="operatorId">
-          <option :value="null">—</option>
+      <div class="op-field op-operator">
+        <label>{{ t('op.operator') }}</label>
+        <select v-model="operatorId" :class="{ 'is-missing': !operatorId }">
+          <option :value="null">— {{ t('op.selectOperator') }} —</option>
           <option v-for="op in operators" :key="op.id" :value="op.id">
             {{ op.display_name }}
           </option>
         </select>
       </div>
-      <div class="meta-item" style="flex:1">
-        <label>{{ t('scan.note') }}</label>
-        <input v-model="note" type="text" />
+
+      <div class="op-field op-qty">
+        <label>{{ t('op.qty') }}</label>
+        <input v-model.number="quantity" type="number" min="1" step="1" />
+      </div>
+
+      <div class="op-field op-note">
+        <label>{{ t('op.note') }}</label>
+        <input v-model="note" :placeholder="t('op.notePlaceholder')" />
       </div>
     </div>
 
-    <!-- Cart -->
-    <div v-if="lines.length" class="cart card">
-      <table>
-        <thead>
-          <tr>
-            <th style="width:30px">
-              <input type="checkbox" :checked="selectedIds.size === lines.length && lines.length > 0" @change="toggleSelectAll" />
-            </th>
-            <th>{{ t('item.barcode') }}</th>
-            <th>{{ t('item.nameZh') }}</th>
-            <th style="width:80px">{{ t('item.stock') }}</th>
-            <th style="width:100px">{{ t('batch.operation') }}</th>
-            <th style="width:80px">{{ t('scan.quantity') }}</th>
-            <th style="width:40px"></th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="line in lines"
-            :key="line.id"
-            :class="{ 'row-err': !lineValid(line) }"
-          >
-            <td>
-              <input type="checkbox" :checked="selectedIds.has(line.id)" @change="toggleSelect(line.id)" />
-            </td>
-            <td style="font-family:monospace;font-size:0.8rem">{{ line.barcode }}</td>
-            <td>
-              <div class="line-name">{{ displayName(line.item) }}</div>
-              <div v-if="lineError(line)" class="line-err-msg">{{ lineError(line) }}</div>
-            </td>
-            <td>
-              <span class="stock-num" :class="{
-                low: line.item.quantity > 0 && line.item.min_stock > 0 && line.item.quantity < line.item.min_stock,
-                zero: line.item.quantity <= 0
-              }">{{ line.item.quantity }}</span>
-            </td>
-            <td>
-              <select
-                :value="line.type"
-                @change="setLineType(line.id, $event.target.value)"
-                class="type-select"
-              >
-                <option value="OUT">{{ t('batch.out') }}</option>
-                <option value="IN">{{ t('batch.in') }}</option>
-                <option value="RETURN">{{ t('batch.return') }}</option>
-              </select>
-            </td>
-            <td>
-              <input
-                :value="line.quantity"
-                @change="setLineQty(line.id, $event.target.value)"
-                type="number"
-                min="1"
-                class="qty-input"
-                :disabled="line.item.track_mode === 'SNP'"
-                :title="line.item.track_mode === 'SNP' ? 'SNP 单品模式，数量固定为 1' : ''"
-              />
-            </td>
-            <td>
-              <button
-                type="button"
-                class="btn-remove"
-                @click="removeLine(line.id)"
-                :title="locale === 'zh-CN' ? '移除' : 'Remove'"
-              >✕</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-
-      <!-- Summary -->
-      <div class="cart-summary">
-        <span v-if="summary.outCount" class="sum-tag out">{{ t('batch.out') }}: {{ summary.outCount }}种 / {{ summary.out }}件</span>
-        <span v-if="summary.inCount" class="sum-tag in">{{ t('batch.in') }}: {{ summary.inCount }}种 / {{ summary.in }}件</span>
-        <span v-if="summary.returnCount" class="sum-tag return">{{ t('batch.return') }}: {{ summary.returnCount }}种 / {{ summary.return }}件</span>
-        <span class="sum-total">{{ lines.length }} {{ locale === 'zh-CN' ? '种' : 'items' }}</span>
-      </div>
+    <!-- scan box -->
+    <div class="card scan-card" :class="modeClass">
+      <input
+        ref="scanRef"
+        v-model="code"
+        class="scan-input"
+        type="text"
+        lang="en"
+        inputmode="latin"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+        :disabled="busy || !operatorId"
+        :placeholder="operatorId ? t('op.scanReady', { mode: modeLabel }) : t('op.scanBlocked')"
+        @keydown.enter.prevent="onScan"
+        @input="onCodeInput"
+        @focus="setScanFocus(true)"
+        @blur="setScanFocus(false)"
+        @compositionstart="onCompositionStart"
+        @compositionend="onCompositionEnd"
+      />
+      <p class="ime-hint" :class="{ warn: imeState === 'warn' }">
+        {{ imeState === 'warn' ? t('op.imeDetected') : t('op.imeHint') }}
+      </p>
+      <p v-if="errorText" class="msg error">{{ errorText }}</p>
+      <p v-else-if="okText" class="msg ok">{{ okText }}</p>
     </div>
 
-    <!-- Batch type switcher -->
-    <div v-if="selectedIds.size > 0" class="batch-bar">
-      <span class="batch-bar-label">{{ selectedIds.size }} {{ locale === 'zh-CN' ? '种已选 → 改为' : ' selected → set to' }}</span>
-      <button type="button" class="btn-batch out" @click="batchSetType('OUT')">{{ t('batch.out') }}</button>
-      <button type="button" class="btn-batch in" @click="batchSetType('IN')">{{ t('batch.in') }}</button>
-      <button type="button" class="btn-batch return" @click="batchSetType('RETURN')">{{ t('batch.return') }}</button>
-    </div>
+    <!-- current item + this session -->
+    <div class="op-grid">
+      <section class="card current-card">
+        <div class="card-title">
+          {{ t('op.current') }}
+          <span v-if="current" class="sub">{{ current.program }} · {{ current.track_mode }}</span>
+        </div>
+        <template v-if="current">
+          <div class="current-name">{{ displayName(current) }}</div>
+          <div class="mono">{{ current.barcode }}</div>
+          <div class="current-stats">
+            <div>
+              <span class="stat-label">{{ t('op.stock') }}</span>
+              <span
+                class="stat-value"
+                :class="{
+                  zero: current.quantity <= 0,
+                  low: current.quantity > 0 && current.min_stock > 0 && current.quantity < current.min_stock,
+                }"
+              >{{ current.quantity }}<small>{{ current.unit }}</small></span>
+            </div>
+            <div v-if="current.location_code">
+              <span class="stat-label">{{ t('op.location') }}</span>
+              <span class="stat-value small">{{ current.location_code }}</span>
+            </div>
+            <div v-if="current.min_stock > 0">
+              <span class="stat-label">{{ t('item.minStock') }}</span>
+              <span class="stat-value small">{{ current.min_stock }}</span>
+            </div>
+          </div>
+        </template>
+        <p v-else class="empty-hint">{{ t('op.noCurrent') }}</p>
+      </section>
 
-    <div v-else class="empty-hint card">
-      {{ t('batch.emptyHint') }}
-    </div>
+      <section class="card session-card">
+        <div class="card-title">
+          {{ t('op.session') }}
+          <span class="sub">{{ t('op.count', { n: totals.count }) }}</span>
+          <button
+            v-if="ops.length"
+            type="button"
+            class="ghost clear-btn"
+            @click="clearSession"
+          >{{ t('op.clear') }}</button>
+        </div>
 
-    <!-- Action bar -->
-    <div class="action-bar" v-if="lines.length">
-      <button
-        type="button"
-        class="btn-clear secondary"
-        @click="clearAll"
-      >{{ t('batch.clearAll') }}</button>
-      <button
-        type="button"
-        class="btn-confirm"
-        :disabled="!allValid || submitting || !operatorId"
-        @click="confirmAll"
-      >
-        {{ submitting ? t('common.loading') : t('batch.confirmAll') }}
-      </button>
-    </div>
+        <div class="totals">
+          <span class="total in">{{ t('batch.in') }} {{ totals.IN }}</span>
+          <span class="total out">{{ t('batch.out') }} {{ totals.OUT }}</span>
+        </div>
 
-    <p v-if="message" class="msg" :class="messageOk ? 'ok' : 'error'">{{ message }}</p>
-    </div><!-- /batch-main -->
-  </div><!-- /batch-layout -->
+        <ul v-if="ops.length" class="op-list">
+          <li v-for="op in ops" :key="op.id" :class="{ undone: op.undone }">
+            <span class="op-type" :class="op.type.toLowerCase()">{{ t(`batch.${op.type.toLowerCase()}`) }}</span>
+            <span class="op-name">{{ op.name }}</span>
+            <span class="op-qty">{{ op.quantity }}{{ op.unit }}</span>
+            <span class="op-time">{{ op.at.toLocaleTimeString() }}</span>
+            <button
+              v-if="!op.undone"
+              type="button"
+              class="ghost undo-btn"
+              @click="undo(op)"
+            >{{ t('op.undo') }}</button>
+            <span v-else class="tag">{{ t('op.undone') }}</span>
+          </li>
+        </ul>
+        <p v-else class="empty-hint">{{ t('op.sessionEmpty') }}</p>
+      </section>
+    </div>
+  </div>
 </template>
 
 <style scoped>
-.batch-layout {
+.op {
   display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* toolbar */
+.op-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
   gap: 16px;
-  align-items: flex-start;
+  padding: 14px 16px;
 }
 
-.batch-main {
-  flex: 1;
+.op-field {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
-  max-width: 960px;
 }
 
-.scan-bar { margin-bottom: 12px; }
+.op-field label {
+  margin-bottom: 5px;
+}
 
-/* The scan bar is the primary control on this page, so it stays large and
-   centred. These properties used to live in a global styles.css rule that only
-   existed for the removed single-scan page. */
+.op-operator {
+  min-width: 170px;
+}
+
+.op-qty {
+  width: 92px;
+}
+
+.op-qty input {
+  text-align: center;
+  font-weight: 650;
+}
+
+.op-note {
+  flex: 1;
+  min-width: 160px;
+}
+
+select.is-missing {
+  border-color: var(--warn);
+  box-shadow: 0 0 0 3px var(--warn-soft);
+}
+
+/* scan */
+.scan-card {
+  position: relative;
+  padding: 16px;
+  border-left: 4px solid var(--muted);
+}
+
+.scan-card.mode-in { border-left-color: var(--success); }
+.scan-card.mode-out { border-left-color: var(--danger); }
+
 .scan-input {
   width: 100%;
-  padding: 14px 16px;
+  padding: 16px 18px;
   font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
   text-align: center;
-  letter-spacing: 0.05em;
-  border: 2px solid var(--accent);
-  border-radius: 12px;
-  background: var(--bg);
-  color: var(--text);
-  outline: none;
+  border: 2px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
 }
 
 .scan-input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(99,102,241,0.15);
+  box-shadow: 0 0 0 4px var(--accent-soft);
 }
 
-.meta-row {
+.scan-input:disabled {
+  opacity: 0.6;
+}
+
+.scan-card .msg {
+  margin-top: 10px;
+}
+
+.ime-hint {
   display: flex;
-  gap: 12px;
-  margin-bottom: 12px;
-  flex-wrap: wrap;
-}
-
-.meta-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 140px;
-}
-
-.meta-item label {
-  font-size: 0.8rem;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 0;
+  font-size: 0.8125rem;
   color: var(--muted);
 }
 
-.meta-item select,
-.meta-item input {
+.ime-hint::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--success);
+  flex: none;
+}
+
+.ime-hint.warn {
   padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
-  color: var(--text);
-  font-size: 0.95rem;
-}
-
-/* Cart table */
-.cart {
-  padding: 0;
-  overflow: hidden;
-  overflow-x: auto;
-  margin-bottom: 12px;
-}
-
-.cart table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.cart th {
-  text-align: left;
-  padding: 10px 12px;
-  font-size: 0.8rem;
-  color: var(--muted);
-  border-bottom: 1px solid var(--border);
-  background: var(--bg);
-}
-
-.cart td {
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: middle;
-}
-
-.cart tbody tr:last-child td {
-  border-bottom: none;
-}
-
-.cart tbody tr:hover {
-  background: rgba(99,102,241,0.04);
-}
-
-.line-name {
-  font-weight: 600;
-  font-size: 0.95rem;
-}
-
-.line-err-msg {
+  border-radius: var(--radius);
+  background: var(--danger-soft);
   color: var(--danger);
-  font-size: 0.75rem;
-  margin-top: 2px;
+  font-weight: 650;
 }
 
-.row-err {
-  background: rgba(246,109,109,0.08);
+.ime-hint.warn::before {
+  background: var(--danger);
 }
 
-.stock-num {
+/* two columns */
+.op-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+  gap: 14px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .op-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* current item */
+.current-card {
+  min-height: 190px;
+}
+
+.current-name {
+  font-size: 1.25rem;
   font-weight: 700;
-  font-size: 0.95rem;
+  line-height: 1.3;
+  margin-bottom: 2px;
+}
+
+.current-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 26px;
+  margin-top: 16px;
+}
+
+.stat-label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.stat-value {
+  font-size: 1.9rem;
+  font-weight: 750;
+  line-height: 1.15;
   color: var(--success);
 }
 
-.stock-num.low { color: var(--warn); }
-.stock-num.zero { color: var(--danger); }
-
-.type-select {
-  padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--text);
-  font-size: 0.85rem;
-  width: 100%;
-}
-
-.qty-input {
-  padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--text);
-  font-size: 0.9rem;
-  width: 70px;
-  text-align: center;
-}
-
-.qty-input:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  background: var(--surface);
-}
-
-.btn-remove {
-  border: none;
-  background: none;
+.stat-value small {
+  margin-left: 3px;
+  font-size: 0.8125rem;
+  font-weight: 600;
   color: var(--muted);
-  cursor: pointer;
-  font-size: 1rem;
-  padding: 4px 8px;
-  border-radius: 4px;
 }
 
-.btn-remove:hover {
-  color: var(--danger);
-  background: rgba(246,109,109,0.1);
+.stat-value.small {
+  font-size: 1.0625rem;
+  color: var(--text);
 }
 
-/* Summary */
-.cart-summary {
-  padding: 12px 16px;
+.stat-value.low { color: var(--warn); }
+.stat-value.zero { color: var(--danger); }
+
+/* session */
+.session-card {
+  min-height: 190px;
+}
+
+.clear-btn {
+  margin-left: auto;
+  padding: 3px 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.totals {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  border-top: 1px solid var(--border);
-  background: var(--bg);
+  gap: 6px;
+  margin-bottom: 10px;
 }
 
-.sum-tag {
-  padding: 3px 10px;
-  border-radius: 12px;
-  font-size: 0.8rem;
-  font-weight: 600;
+.total {
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 650;
+  background: var(--surface-3);
+  color: var(--text-soft);
 }
 
-.sum-tag.out { background: rgba(246,109,109,0.12); color: var(--danger); }
-.sum-tag.in { background: rgba(34,197,94,0.12); color: var(--success); }
-.sum-tag.return { background: rgba(99,102,241,0.12); color: var(--accent); }
+.total.in { background: var(--success-soft); color: var(--success); }
+.total.out { background: var(--danger-soft); color: var(--danger); }
 
-.sum-total {
-  margin-left: auto;
-  font-weight: 600;
-  font-size: 0.9rem;
-  color: var(--muted);
+.op-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
 }
 
-/* Batch type bar */
-.batch-bar {
+.op-list li {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 16px;
-  margin-bottom: 12px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.875rem;
 }
 
-.batch-bar-label {
-  font-size: 0.85rem;
-  color: var(--muted);
-  margin-right: 4px;
+.op-list li:last-child {
+  border-bottom: none;
 }
 
-.btn-batch {
-  padding: 6px 16px;
-  border-radius: 8px;
-  border: none;
-  font-size: 0.85rem;
-  font-weight: 600;
-  cursor: pointer;
-  color: #fff;
+.op-list li.undone {
+  opacity: 0.45;
 }
 
-.btn-batch.out { background: var(--danger); }
-.btn-batch.in { background: var(--success); }
-.btn-batch.return { background: var(--accent); }
-
-.btn-batch:hover { filter: brightness(1.15); }
-
-/* Empty */
-.empty-hint {
-  text-align: center;
-  padding: 48px 16px;
-  color: var(--muted);
-  font-size: 1rem;
+.op-list li.undone .op-name {
+  text-decoration: line-through;
 }
 
-/* Action bar */
-.action-bar {
-  display: flex;
-  gap: 12px;
-  justify-content: flex-end;
-  margin-bottom: 12px;
-}
-
-.btn-clear {
-  padding: 10px 20px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--muted);
-  font-size: 0.95rem;
-  cursor: pointer;
-}
-
-.btn-clear:hover {
-  color: var(--danger);
-  border-color: var(--danger);
-}
-
-.btn-confirm {
-  padding: 10px 32px;
-  border-radius: 10px;
-  border: none;
-  background: var(--accent);
-  color: #fff;
-  font-size: 1.05rem;
+.op-type {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: var(--radius-sm);
+  font-size: 0.6875rem;
   font-weight: 700;
-  cursor: pointer;
 }
 
-.btn-confirm:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
+.op-type.in { background: var(--success-soft); color: var(--success); }
+.op-type.out { background: var(--danger-soft); color: var(--danger); }
+/* Legacy rows created by older versions (type RETURN) still need a colour. */
+.op-type.return { background: var(--accent-soft); color: var(--accent); }
+
+.op-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
 }
 
-.btn-confirm:not(:disabled):hover {
-  filter: brightness(1.1);
+.op-qty {
+  flex: none;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.op-time {
+  flex: none;
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.undo-btn {
+  flex: none;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.undo-btn:hover:not(:disabled) {
+  color: var(--danger);
+  background: var(--danger-soft);
 }
 </style>

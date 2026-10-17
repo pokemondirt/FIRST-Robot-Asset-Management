@@ -515,3 +515,133 @@ func TestImportReportsBadNumbers(t *testing.T) {
 		t.Errorf("rejected row was imported anyway")
 	}
 }
+
+// The old seed only ran when the categories table was empty, so a built-in
+// category deleted in an earlier version (电机 in practice) never came back and
+// silently disappeared from the item form's category picker.
+func TestSeedRestoresMissingBuiltinCategories(t *testing.T) {
+	resetDB(t)
+
+	if _, err := db.Exec("DELETE FROM categories WHERE name_zh = '电机'"); err != nil {
+		t.Fatalf("delete category: %v", err)
+	}
+	if _, err := db.Exec("DELETE FROM app_settings WHERE key = 'categories_seed_version'"); err != nil {
+		t.Fatalf("delete seed version: %v", err)
+	}
+
+	seed()
+
+	var n int
+	db.QueryRow("SELECT COUNT(*) FROM categories WHERE name_zh = '电机'").Scan(&n)
+	if n != 1 {
+		t.Errorf("电机 was not restored by the migration (count=%d)", n)
+	}
+
+	// The restore is a one-off: deleting it afterwards must stick, otherwise it
+	// would reappear on every start.
+	if _, err := db.Exec("DELETE FROM categories WHERE name_zh = '电机'"); err != nil {
+		t.Fatalf("second delete: %v", err)
+	}
+	seed()
+	db.QueryRow("SELECT COUNT(*) FROM categories WHERE name_zh = '电机'").Scan(&n)
+	if n != 0 {
+		t.Errorf("a deliberately deleted category came back on the next start (count=%d)", n)
+	}
+
+	// Categories the operator created themselves are never touched.
+	if _, err := db.Exec("INSERT INTO categories (name_zh, name_en) VALUES ('铣床相关配件', 'CNC')"); err != nil {
+		t.Fatalf("insert custom category: %v", err)
+	}
+	seed()
+	db.QueryRow("SELECT COUNT(*) FROM categories WHERE name_zh = '铣床相关配件'").Scan(&n)
+	if n != 1 {
+		t.Errorf("custom category disappeared (count=%d)", n)
+	}
+}
+
+// A purchased part often carries its own barcode. That code has to be usable
+// as-is, and it must survive an edit of program / tracking mode.
+func TestCustomBarcodeIsKept(t *testing.T) {
+	resetDB(t)
+
+	var it Item
+	rr := callJSON(t, "POST", "/api/items", map[string]any{
+		"barcode": "0123456789012", "name_zh": "自带条码", "program": "FRC", "track_mode": "BLK",
+	})
+	mustStatus(t, rr, 200, "create with a custom barcode")
+	json.Unmarshal(rr.Body.Bytes(), &it)
+	if it.Barcode != "0123456789012" {
+		t.Fatalf("barcode = %q, want the one supplied", it.Barcode)
+	}
+	if it.BarcodeAuto {
+		t.Errorf("barcode_auto = true although the barcode was supplied")
+	}
+
+	rr = callJSON(t, "PATCH", fmt.Sprintf("/api/items/%d", it.ID), map[string]any{"program": "FTC"})
+	mustStatus(t, rr, 200, "patch program")
+	var after Item
+	json.Unmarshal(rr.Body.Bytes(), &after)
+	if after.Barcode != "0123456789012" {
+		t.Errorf("a supplied barcode was renumbered to %q", after.Barcode)
+	}
+	if after.Program != "FTC" {
+		t.Errorf("program = %q, want FTC", after.Program)
+	}
+}
+
+func TestAutoBarcodeStillFollowsProgram(t *testing.T) {
+	resetDB(t)
+	id := createItem(t, map[string]any{"name_zh": "auto", "program": "FRC", "track_mode": "BLK"})
+
+	rr := callJSON(t, "PATCH", fmt.Sprintf("/api/items/%d", id), map[string]any{"program": "FTC"})
+	mustStatus(t, rr, 200, "patch program")
+	var after Item
+	json.Unmarshal(rr.Body.Bytes(), &after)
+	if !strings.HasPrefix(after.Barcode, "FTC-BLK-") {
+		t.Errorf("auto barcode = %q, want a FTC-BLK- prefix", after.Barcode)
+	}
+	if !after.BarcodeAuto {
+		t.Errorf("the auto flag was lost")
+	}
+}
+
+func TestDuplicateBarcodeOnUpdate(t *testing.T) {
+	resetDB(t)
+	createItem(t, map[string]any{"barcode": "DUP-A", "name_zh": "a"})
+	id := createItem(t, map[string]any{"barcode": "DUP-B", "name_zh": "b"})
+
+	rr := callJSON(t, "PATCH", fmt.Sprintf("/api/items/%d", id), map[string]any{"barcode": "DUP-A"})
+	mustStatus(t, rr, 400, "rename onto an existing barcode")
+}
+
+func TestBarcodeRejectsWhitespaceAndCJK(t *testing.T) {
+	resetDB(t)
+	mustStatus(t, callJSON(t, "POST", "/api/items", map[string]any{"name_zh": "x", "barcode": "A B"}), 400, "barcode containing a space")
+	mustStatus(t, callJSON(t, "POST", "/api/items", map[string]any{"name_zh": "x", "barcode": "条码123"}), 400, "barcode containing CJK")
+}
+
+// Editing the stock number in the item form goes through an ADJUST movement,
+// which sets an absolute value and stays visible in the history.
+func TestStockAdjustSetsAbsoluteValue(t *testing.T) {
+	resetDB(t)
+	createItem(t, map[string]any{"barcode": "ADJ-1", "name_zh": "x", "quantity_initial": 3})
+
+	rr := callJSON(t, "POST", "/api/transactions", map[string]any{"barcode": "ADJ-1", "type": "ADJUST", "quantity": 42})
+	mustStatus(t, rr, 200, "adjust up")
+	if got := getStock(t, itemIDOf(t, "ADJ-1")); got != 42 {
+		t.Errorf("stock = %d, want 42", got)
+	}
+
+	rr = callJSON(t, "POST", "/api/transactions", map[string]any{"barcode": "ADJ-1", "type": "ADJUST", "quantity": 0})
+	mustStatus(t, rr, 200, "adjust to zero")
+	if got := getStock(t, itemIDOf(t, "ADJ-1")); got != 0 {
+		t.Errorf("stock = %d, want 0", got)
+	}
+
+	// the movement is recorded, so the change is auditable
+	var n int
+	db.QueryRow("SELECT COUNT(*) FROM transactions WHERE type = 'ADJUST'").Scan(&n)
+	if n != 2 {
+		t.Errorf("ADJUST transactions = %d, want 2", n)
+	}
+}

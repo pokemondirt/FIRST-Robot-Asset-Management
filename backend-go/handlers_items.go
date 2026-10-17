@@ -20,17 +20,19 @@ func validTrackMode(m string) bool {
 func scanItemFields(scan func(...any) error, it *Item) (*string, error) {
 	var locCode *string
 	var activeInt int
+	var barcodeAutoInt int
 	var createdAtStr string
 	err := scan(
 		&it.ID, &it.Barcode, &it.Program, &it.TrackMode,
 		&it.NameZh, &it.NameEn, &it.Category, &it.Spec, &it.Unit,
 		&it.MinStock, &it.LocationID, &it.Note, &activeInt, &createdAtStr,
-		&it.Quantity, &locCode,
+		&it.Quantity, &locCode, &barcodeAutoInt,
 	)
 	if err != nil {
 		return nil, err
 	}
 	it.Active = activeInt == 1
+	it.BarcodeAuto = barcodeAutoInt == 1
 	it.CreatedAt = parseTime(createdAtStr)
 	return locCode, nil
 }
@@ -39,7 +41,7 @@ const itemSelectSQL = `
 	SELECT i.id, i.barcode, i.program, i.track_mode, i.name_zh, i.name_en,
 	       i.category, i.spec, i.unit, i.min_stock, i.location_id, i.note, i.active, i.created_at,
 	       COALESCE(s.quantity, 0),
-	       l.code
+	       l.code, i.barcode_auto
 	FROM items i
 	LEFT JOIN stock s ON s.item_id = i.id
 	LEFT JOIN locations l ON l.id = i.location_id
@@ -182,7 +184,9 @@ func handleCreateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Category == "" {
-		req.Category = "MISC"
+		// The seeded catch-all is named 其他; "MISC" is only its English label
+		// and would land the item in a category that does not exist.
+		req.Category = "其他"
 	}
 	if req.Unit == "" {
 		req.Unit = "pcs"
@@ -232,6 +236,16 @@ func handleCreateItem(w http.ResponseWriter, r *http.Request) {
 	// on UNIQUE collisions instead of failing a legitimate concurrent create.
 	barcode := req.Barcode
 	autoBarcode := barcode == ""
+	if !autoBarcode {
+		if msg := checkBarcode(barcode); msg != "" {
+			writeError(w, 400, msg)
+			return
+		}
+	}
+	barcodeAuto := 1
+	if !autoBarcode {
+		barcodeAuto = 0
+	}
 	const maxBarcodeAttempts = 8
 	var err error
 	var result sql.Result
@@ -240,10 +254,10 @@ func handleCreateItem(w http.ResponseWriter, r *http.Request) {
 			barcode = nextBarcode(db, req.Program, req.TrackMode)
 		}
 		result, err = db.Exec(`
-			INSERT INTO items (barcode, program, track_mode, name_zh, name_en, category, spec, unit, min_stock, location_id, note, active, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			INSERT INTO items (barcode, program, track_mode, name_zh, name_en, category, spec, unit, min_stock, location_id, note, active, created_at, barcode_auto)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, barcode, req.Program, req.TrackMode, req.NameZh, req.NameEn,
-			req.Category, req.Spec, req.Unit, req.MinStock, req.LocationID, req.Note, active, nowSQL())
+			req.Category, req.Spec, req.Unit, req.MinStock, req.LocationID, req.Note, active, nowSQL(), barcodeAuto)
 		if err == nil {
 			break
 		}
@@ -303,7 +317,10 @@ func handleUpdateItem(w http.ResponseWriter, r *http.Request) {
 	// a missing id is a 404 instead of the misleading "no fields to update")
 	// and supplies the values used to detect a program/mode change.
 	var curProgram, curMode string
-	if err := db.QueryRow("SELECT program, track_mode FROM items WHERE id = ?", id).Scan(&curProgram, &curMode); err != nil {
+	var curBarcodeAuto int
+	if err := db.QueryRow(
+		"SELECT program, track_mode, barcode_auto FROM items WHERE id = ?", id,
+	).Scan(&curProgram, &curMode, &curBarcodeAuto); err != nil {
 		writeError(w, 404, "Item not found")
 		return
 	}
@@ -352,8 +369,28 @@ func handleUpdateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// An operator-supplied barcode (typically the manufacturer's own code on a
+	// purchased part) wins over the numbering scheme and is never regenerated
+	// afterwards. An empty value means "leave the barcode alone".
 	sets := []string{}
 	args := []any{}
+	barcodeProvided := false
+	if req.Barcode != nil {
+		barcode := strings.TrimSpace(*req.Barcode)
+		if barcode != "" {
+			if msg := checkBarcode(barcode); msg != "" {
+				writeError(w, 400, msg)
+				return
+			}
+			if msg := maxLenError("barcode", barcode, MaxBarcodeLen); msg != "" {
+				writeError(w, 400, msg)
+				return
+			}
+			sets = append(sets, "barcode = ?", "barcode_auto = 0")
+			args = append(args, barcode)
+			barcodeProvided = true
+		}
+	}
 	if req.Program != nil {
 		sets = append(sets, "program = ?")
 		args = append(args, *req.Program)
@@ -363,8 +400,11 @@ func handleUpdateItem(w http.ResponseWriter, r *http.Request) {
 		args = append(args, *req.TrackMode)
 	}
 	// Regenerate the barcode whenever program or track_mode actually changes,
-	// using the NEW values so the barcode prefix always matches the item.
-	if req.Program != nil || req.TrackMode != nil {
+	// using the NEW values so the barcode prefix always matches the item. This
+	// only applies to auto-numbered items: a manually entered barcode must stay
+	// as it is, otherwise editing the program would silently change the code
+	// printed on the label.
+	if !barcodeProvided && curBarcodeAuto == 1 && (req.Program != nil || req.TrackMode != nil) {
 		newProgram, newMode := curProgram, curMode
 		changed := false
 		if req.Program != nil && *req.Program != curProgram {
@@ -433,6 +473,10 @@ func handleUpdateItem(w http.ResponseWriter, r *http.Request) {
 	args = append(args, id)
 	query := "UPDATE items SET " + strings.Join(sets, ", ") + " WHERE id = ?"
 	if _, err := db.Exec(query, args...); err != nil {
+		if strings.Contains(err.Error(), "UNIQUE") {
+			writeError(w, 400, "Barcode already exists")
+			return
+		}
 		writeError(w, 500, err.Error())
 		return
 	}

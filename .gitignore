@@ -7,6 +7,10 @@ frontend/node_modules/
 frontend/dist/
 *.exe
 
+# 前端构建产物会被拷到这里并编进 exe；只保留占位文件
+backend-go/webembed/dist/*
+!backend-go/webembed/dist/.gitkeep
+
 # 发布产生的安装包（可用 build-release.ps1 重新生成）
 scripts/release/out/
 scripts/release/*.zip

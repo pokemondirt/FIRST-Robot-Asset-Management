@@ -14,7 +14,9 @@ function Test-PortListen([int]$Port) {
 
 if (-not (Test-PortListen 8000)) {
     Write-Host "Starting Go backend on http://127.0.0.1:8000 ..." -ForegroundColor Cyan
-    Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-Location -LiteralPath '$GoDir'; & '$Root\start-go.ps1'"
+    # -ExecutionPolicy Bypass: the child window would otherwise inherit a policy
+    # that refuses this unsigned script (see README, "为什么用 .cmd 启动").
+    Start-Process powershell -ArgumentList "-NoExit", "-ExecutionPolicy", "Bypass", "-Command", "Set-Location -LiteralPath '$GoDir'; & '$Root\start-go.ps1'"
     Start-Sleep -Seconds 4
 } else {
     Write-Host "Port 8000 in use (backend may already run)." -ForegroundColor Yellow

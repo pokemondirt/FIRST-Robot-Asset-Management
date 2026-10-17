@@ -8,29 +8,61 @@
     "items": "Items",
     "history": "History",
     "board": "Dashboard",
+    "guide": "Guide",
     "settings": "Settings"
   },
+  "theme": {
+    "auto": "Theme: follow system (click to change)",
+    "light": "Theme: light (click to change)",
+    "dark": "Theme: dark (click to change)"
+  },
+  "alerts": {
+    "title": "Stock alerts",
+    "none": "Stock is healthy ✓",
+    "critical": "Out of stock",
+    "warning": "Low",
+    "stock": "Stock"
+  },
+  "guide": {
+    "title": "Category guide"
+  },
   "scan": {
-    "quantity": "Quantity",
+    "quantity": "Qty",
     "operator": "Operator",
     "note": "Note",
-    "unknown": "Unknown barcode",
-    "selectOperator": "Select operator"
+    "unknown": "Unknown barcode"
+  },
+  "op": {
+    "mode": "Operation",
+    "operator": "Operator",
+    "qty": "Qty",
+    "note": "Note",
+    "notePlaceholder": "Added to every transaction (optional)",
+    "selectOperator": "Select operator",
+    "scanReady": "Scan a barcode and press Enter to check {mode}",
+    "scanBlocked": "Select an operator first",
+    "imeHint": "Make sure the IME is in English before scanning (Shift toggles it)",
+    "imeDetected": "Chinese IME detected — this input was discarded. Press Shift to switch to English, then scan again.",
+    "current": "Current item",
+    "noCurrent": "Scan a barcode to see the item and its current stock",
+    "session": "This session",
+    "sessionEmpty": "No operations yet",
+    "undo": "Undo",
+    "undone": "Undone",
+    "clear": "Clear",
+    "done": "Recorded",
+    "insufficient": "Insufficient stock (have {have}, need {need})",
+    "invalidQty": "Invalid quantity",
+    "invalidType": "Invalid operation type",
+    "operatorInvalid": "This operator is unavailable, please pick another",
+    "stock": "Stock",
+    "location": "Location",
+    "count": "{n} operation(s)"
   },
   "batch": {
-    "scanPlaceholder": "Scan or type barcode then press Enter — keep scanning to add more items",
-    "operation": "Operation",
-    "out": "Check Out",
     "in": "Check In",
-    "return": "Return",
-    "added": "Added",
-    "confirmAll": "Confirm All",
-    "clearAll": "Clear All",
-    "emptyHint": "Scan or type barcodes above to add items to the list. You can check out, check in, and return items all at once.",
-    "allSuccess": "All {count} transactions succeeded",
-    "allFailed": "All transactions failed — check items and retry",
-    "partialSuccess": "Partial success: {ok} succeeded, {err} failed (failed items kept in list)",
-    "insufficient": "Insufficient stock (have {have}, need {need})"
+    "out": "Check Out",
+    "return": "Return"
   },
   "item": {
     "barcode": "Barcode",
@@ -51,15 +83,42 @@
     "add": "Add item",
     "import": "Import",
     "export": "Export",
-    "template": "Download template"
+    "template": "Template",
+    "initialQty": "Initial stock",
+    "stockHint": "Changing this records an inventory adjustment in the history",
+    "stockAdjustNote": "Stock adjusted while editing item",
+    "barcodeAuto": "Leave blank to auto-number",
+    "barcodeKeep": "Leave blank to keep the current barcode",
+    "barcodeAutoHint": "Leave blank to let the system number it (e.g. FRC-BLK-00001); type the part's own barcode if it has one",
+    "barcodeSystemHint": "Auto-numbered; editing program/mode will renumber it",
+    "barcodeCustomHint": "Manually entered; editing program/mode will not change it",
+    "guideLink": "Not sure? Open the guide",
+    "autoSuggested": "Picked “{name}” from the name — click another category to change it",
+    "editTitle": "Edit item",
+    "showInactive": "Show inactive",
+    "updated": "Updated",
+    "created": "Created",
+    "deactivated": "Deactivated",
+    "activated": "Activated",
+    "imported": "Imported {created} item(s), {errors} error(s)",
+    "activate": "Activate",
+    "empty": "No matching items",
+    "purgeTitle": "Permanently delete item",
+    "purgeWarn": "This removes the item, its stock and all of its history. It cannot be undone:",
+    "purgePassword": "Purge password",
+    "purgePasswordHint": "Enter the password to confirm",
+    "purgeConfirm": "Delete permanently",
+    "purged": "Deleted permanently"
   },
-  "settings": {
-    "backup": "Backup database",
-    "stats": "Statistics",
-    "totalItems": "Item types",
-    "lowStock": "Low stock",
-    "locationInUse": "{count} item(s) still use this location — reassign them first",
-    "categoryInUse": "{count} item(s) still use this category — reassign them first"
+  "history": {
+    "all": "All",
+    "count": "{n} record(s)",
+    "refresh": "Refresh",
+    "time": "Time",
+    "type": "Type",
+    "item": "Item",
+    "empty": "No transactions yet",
+    "adjust": "Adjust"
   },
   "board": {
     "title": "Warehouse Board",
@@ -77,20 +136,61 @@
     "allOk": "No alerts",
     "autoRefresh": "Auto-refresh every 30s"
   },
+  "settings": {
+    "backup": "Backup database",
+    "backupDone": "Backup created",
+    "stats": "Stock summary",
+    "totalItems": "Item types",
+    "lowStock": "Low stock",
+    "totalUnits": "Total units",
+    "backupDesc": "Writes a database snapshot into data/backups/. Worth doing before upgrades or bulk edits.",
+    "locationInUse": "{count} item(s) still use this location — reassign them first",
+    "categoryInUse": "{count} item(s) still use this category — reassign them first",
+    "sectionData": "Overview & data",
+    "sectionDataSub": "Stock summary and database backups",
+    "sectionSecurity": "Security",
+    "sectionSecuritySub": "Protection for permanent deletion",
+    "sectionMaster": "Master data",
+    "sectionMasterSub": "Operators, locations and categories",
+    "purgeTitle": "Purge password",
+    "purgeDesc": "Required before an item can be deleted permanently (min 4 characters). Without it, items can only be deactivated. Save an empty value to clear it.",
+    "purgeSet": "Set",
+    "purgeUnset": "Not set",
+    "purgePlaceholder": "New password (empty clears it)",
+    "passwordTooShort": "Password must be at least 4 characters"
+  },
   "operators": {
     "title": "Operators",
-    "hint": "Names appear in the dropdown on scan pages. Press Enter or click Add.",
     "placeholder": "Team member name",
     "add": "Add",
     "added": "Operator added",
+    "deactivated": "Operator deactivated",
     "nameRequired": "Enter a name",
     "empty": "No operators yet"
   },
+  "master": {
+    "locationTitle": "Locations",
+    "locationCode": "Code (e.g. A-01)",
+    "locationName": "Name",
+    "categoryTitle": "Categories",
+    "categoryZh": "Name (ZH)",
+    "categoryEn": "Name (EN, optional)",
+    "locAdded": "Location added",
+    "locUpdated": "Location updated",
+    "locDeleted": "Location deleted",
+    "catAdded": "Category added",
+    "catUpdated": "Category updated",
+    "catDeleted": "Category deleted",
+    "none": "Nothing here yet"
+  },
   "common": {
+    "edit": "Edit",
     "save": "Save",
     "saved": "Saved",
     "cancel": "Cancel",
     "delete": "Deactivate",
-    "loading": "Loading…"
+    "purge": "Delete",
+    "remove": "Delete",
+    "loading": "Working…"
   }
 }

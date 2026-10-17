@@ -1,11 +1,14 @@
 package main
 
 import (
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+
+	"first-inventory/webembed"
 )
 
 func main() {
@@ -73,17 +76,13 @@ func main() {
 	mux.HandleFunc("POST /api/data/import", handleImport)
 	mux.HandleFunc("POST /api/data/backup", handleBackup)
 
-	// Static UI (optional): run build-frontend.ps1 first
-	// Look for dist in: release layout (next to exe) -> dev layout (../frontend/dist)
-	frontendDist := filepath.Join(filepath.Dir(execDir), "dist")
-	if _, err := os.Stat(frontendDist); os.IsNotExist(err) {
-		frontendDist = filepath.Join(filepath.Dir(execDir), "..", "frontend", "dist")
-	}
-	if _, err := os.Stat(frontendDist); os.IsNotExist(err) {
-		frontendDist = filepath.Join("..", "frontend", "dist")
-	}
-	if indexExists(frontendDist) {
-		mux.Handle("/", spaHandler{distDir: frontendDist})
+	// Static UI: a dist folder next to the binary (release override) or in the
+	// dev layout wins, otherwise the copy embedded in the executable is served,
+	// so shipping a single .exe is enough.
+	if h, ok := resolveFrontend(execDir); ok {
+		mux.Handle("/", h)
+	} else {
+		log.Println("no frontend found; run build-frontend.cmd to build it, serving the API only")
 	}
 
 	// Apply middleware
@@ -126,7 +125,27 @@ func localIPv4s() []string {
 	return out
 }
 
-func indexExists(dist string) bool {
-	_, err := os.Stat(filepath.Join(dist, "index.html"))
-	return err == nil
+// resolveFrontend returns a handler for the built UI. A dist directory on disk
+// takes precedence, so a development build can be swapped in without
+// recompiling; otherwise the copy embedded in the executable is used.
+func resolveFrontend(execDir string) (spaHandler, bool) {
+	candidates := []string{
+		filepath.Join(filepath.Dir(execDir), "dist"),
+		filepath.Join(filepath.Dir(execDir), "..", "frontend", "dist"),
+		filepath.Join("..", "frontend", "dist"),
+	}
+	for _, dir := range candidates {
+		if info, err := os.Stat(filepath.Join(dir, "index.html")); err == nil && !info.IsDir() {
+			return spaHandler{fsys: os.DirFS(dir)}, true
+		}
+	}
+
+	embedded, err := fs.Sub(webembed.Dist, "dist")
+	if err != nil {
+		return spaHandler{}, false
+	}
+	if _, err := fs.Stat(embedded, "index.html"); err != nil {
+		return spaHandler{}, false
+	}
+	return spaHandler{fsys: embedded}, true
 }

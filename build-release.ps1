@@ -68,6 +68,15 @@ if (-not (Test-Path (Join-Path $DistDir "index.html"))) {
     exit 1
 }
 
+# The UI is embedded into the executable, so the package is a single file.
+Write-Host "Embedding frontend into backend-go/webembed/dist ..." -ForegroundColor Cyan
+$EmbedDir = Join-Path $GoDir "webembed\dist"
+New-Item -ItemType Directory -Force -Path $EmbedDir | Out-Null
+Get-ChildItem -LiteralPath $EmbedDir -Force |
+    Where-Object { $_.Name -ne '.gitkeep' } |
+    Remove-Item -Recurse -Force
+Copy-Item (Join-Path $DistDir "*") $EmbedDir -Recurse -Force
+
 if (Test-Path $OutDir) { Remove-Item -Recurse -Force $OutDir }
 New-Item -ItemType Directory -Path $OutDir | Out-Null
 
@@ -99,7 +108,7 @@ foreach ($target in $Targets) {
     New-Item -ItemType Directory -Path $stage | Out-Null
 
     Move-Item $binPath (Join-Path $stage $exeName)
-    Copy-Item -Recurse $DistDir (Join-Path $stage "dist")
+    # No dist folder: the UI is embedded in the executable.
     # MIT requires the licence text to travel with every copy.
     Copy-Item (Join-Path $Root "LICENSE") $stage
 

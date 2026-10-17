@@ -1,10 +1,12 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api } from '../api/client'
-import GuideSidebar from '../components/GuideSidebar.vue'
+import { categoryDesc, suggestCategory } from '../data/categories'
+import { useUi } from '../composables/useUi'
 
 const { t, locale } = useI18n()
+const { openGuide } = useUi()
 const items = ref([])
 const total = ref(0)
 const q = ref('')
@@ -12,42 +14,93 @@ const page = ref(1)
 const pageSize = 50
 const showInactive = ref(false)
 const message = ref('')
+const messageError = ref(false)
 const showForm = ref(false)
 const editingId = ref(null)
 const saving = ref(false)
 
-const form = ref({
-  name_zh: '',
-  name_en: '',
-  program: 'BOTH',
-  track_mode: 'BLK',
-  category: 'MISC',
-  spec: '',
-  unit: 'pcs',
-  min_stock: 0,
-  note: '',
-  location_id: null,
-  quantity_initial: 0,
-})
+const form = ref(emptyForm())
+// True once the user picks a category by hand; from then on the keyword
+// suggestion stops touching their choice.
+const categoryTouched = ref(false)
 
-function resetForm() {
-  editingId.value = null
-  form.value = {
-    name_zh: '', name_en: '', program: 'BOTH', track_mode: 'BLK',
-    category: 'MISC', spec: '', unit: 'pcs', min_stock: 0,
-    note: '', location_id: null, quantity_initial: 0,
+// Values captured when the edit form opens, so the save handler knows what the
+// user actually changed (the stock becomes an ADJUST movement, the barcode is
+// only sent when it really differs).
+const originalBarcode = ref('')
+const originalBarcodeAuto = ref(true)
+const originalStock = ref(0)
+
+function emptyForm() {
+  return {
+    barcode: '',
+    name_zh: '',
+    name_en: '',
+    program: 'BOTH',
+    track_mode: 'BLK',
+    category: '',
+    spec: '',
+    unit: 'pcs',
+    min_stock: 0,
+    note: '',
+    location_id: null,
+    quantity_initial: 0,
+    stock_qty: 0,
   }
 }
 
-const formTitle = computed(() => {
-  if (editingId.value) return locale.value === 'zh-CN' ? '编辑物资' : 'Edit Item'
-  return t('items.add')
+const barcodeHint = computed(() => {
+  if (!editingId.value) return t('items.barcodeAutoHint')
+  return originalBarcodeAuto.value ? t('items.barcodeSystemHint') : t('items.barcodeCustomHint')
 })
 
-// Categories
-const categories = ref([])
+// "其他" is the seeded catch-all; falling back to the first category keeps the
+// form usable if someone renamed or deleted it.
+function defaultCategory() {
+  const misc = categories.value.find((c) => c.name_zh === '其他')
+  return misc?.name_zh || categories.value[0]?.name_zh || ''
+}
 
-// Locations
+const suggestion = computed(() =>
+  suggestCategory(
+    [form.value.name_zh, form.value.name_en, form.value.spec].join(' '),
+    categories.value.map((c) => c.name_zh),
+  ),
+)
+
+// Auto-pick the category while the operator types the item name, but only
+// until they choose one themselves. This is the part that saves students from
+// having to know the taxonomy by heart.
+const autoSuggested = computed(
+  () =>
+    showForm.value &&
+    !categoryTouched.value &&
+    !!suggestion.value &&
+    form.value.category === suggestion.value,
+)
+
+watch(
+  () => `${form.value.name_zh}|${form.value.name_en}|${form.value.spec}`,
+  () => {
+    if (!showForm.value || categoryTouched.value) return
+    if (suggestion.value) form.value.category = suggestion.value
+  },
+)
+
+function pickCategory(name) {
+  categoryTouched.value = true
+  form.value.category = name
+}
+
+function resetForm() {
+  editingId.value = null
+  categoryTouched.value = false
+  form.value = emptyForm()
+}
+
+const formTitle = computed(() => (editingId.value ? t('items.editTitle') : t('items.add')))
+
+const categories = ref([])
 const locations = ref([])
 
 async function loadCategories() {
@@ -70,6 +123,7 @@ async function load() {
     items.value = []
     total.value = 0
     message.value = e.message
+    messageError.value = true
   }
 }
 
@@ -104,12 +158,18 @@ function displayName(item) {
 
 function openCreate() {
   resetForm()
+  form.value.category = defaultCategory()
   showForm.value = true
 }
 
 function openEdit(it) {
   editingId.value = it.id
+  categoryTouched.value = true // never override an existing item's category
+  originalBarcode.value = it.barcode
+  originalBarcodeAuto.value = it.barcode_auto !== false
+  originalStock.value = it.quantity
   form.value = {
+    barcode: it.barcode,
     name_zh: it.name_zh,
     name_en: it.name_en,
     program: it.program,
@@ -121,19 +181,27 @@ function openEdit(it) {
     note: it.note || '',
     location_id: it.location_id,
     quantity_initial: 0,
+    stock_qty: it.quantity,
   }
   showForm.value = true
 }
 
+function closeForm() {
+  showForm.value = false
+  resetForm()
+}
+
 async function submitForm() {
   saving.value = true
+  message.value = ''
   try {
     // v-model.number yields '' when a numeric input is cleared, and the API
     // only accepts integers there, so coerce before sending.
     const asCount = (v) => {
       const n = Number(v)
-      return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
+      return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0
     }
+    const barcode = (form.value.barcode || '').trim()
     const payload = {
       name_zh: form.value.name_zh,
       name_en: form.value.name_en,
@@ -145,20 +213,40 @@ async function submitForm() {
       min_stock: asCount(form.value.min_stock),
       note: form.value.note,
       location_id: form.value.location_id || null,
-      quantity_initial: asCount(form.value.quantity_initial),
     }
-    if (editingId.value) {
-      await api.updateItem(editingId.value, payload)
-      message.value = locale.value === 'zh-CN' ? '已更新' : 'Updated'
-    } else {
+
+    if (!editingId.value) {
+      payload.quantity_initial = asCount(form.value.quantity_initial)
+      // Empty means "let the server number it".
+      if (barcode) payload.barcode = barcode
       await api.createItem(payload)
-      message.value = 'OK'
+      message.value = t('items.created')
+    } else {
+      // Only send the barcode when it actually changed, so an untouched form
+      // never rewrites it (and never trips the uniqueness check against self).
+      if (barcode && barcode !== originalBarcode.value) payload.barcode = barcode
+
+      const updated = await api.updateItem(editingId.value, payload)
+
+      // Stock is not a plain column: changing it records an ADJUST movement so
+      // the correction shows up in the history like every other change.
+      const newStock = asCount(form.value.stock_qty)
+      if (newStock !== originalStock.value) {
+        await api.createTransaction({
+          barcode: updated.barcode,
+          type: 'ADJUST',
+          quantity: newStock,
+          note: t('items.stockAdjustNote'),
+        })
+      }
+      message.value = t('items.updated')
     }
-    showForm.value = false
-    resetForm()
+    messageError.value = false
+    closeForm()
     await load()
   } catch (e) {
     message.value = e.message
+    messageError.value = true
   } finally {
     saving.value = false
   }
@@ -169,26 +257,45 @@ async function onImport(e) {
   if (!file) return
   try {
     const res = await api.importFile(file)
-    message.value = `Created: ${res.created}, errors: ${res.errors.length}`
+    message.value = t('items.imported', {
+      created: res.created,
+      errors: res.errors.length,
+    })
+    messageError.value = res.errors.length > 0
+    if (res.errors.length) {
+      message.value += '  ' + res.errors.slice(0, 3).join(' | ')
+    }
     await load()
-  } catch (err) { message.value = err.message }
+    await loadLocations()
+  } catch (err) {
+    message.value = err.message
+    messageError.value = true
+  }
   e.target.value = ''
 }
 
 async function deleteItem(id) {
   try {
     await api.deleteItem(id)
-    message.value = locale.value === 'zh-CN' ? '已停用' : 'Deactivated'
+    message.value = t('items.deactivated')
+    messageError.value = false
     await load()
-  } catch (e) { message.value = e.message }
+  } catch (e) {
+    message.value = e.message
+    messageError.value = true
+  }
 }
 
 async function activateItem(id) {
   try {
     await api.updateItem(id, { active: true })
-    message.value = locale.value === 'zh-CN' ? '已启用' : 'Activated'
+    message.value = t('items.activated')
+    messageError.value = false
     await load()
-  } catch (e) { message.value = e.message }
+  } catch (e) {
+    message.value = e.message
+    messageError.value = true
+  }
 }
 
 // ---- purge confirm modal ----
@@ -216,7 +323,8 @@ async function confirmPurge() {
   try {
     await api.purgeItem(purgeTarget.value.id, purgePassword.value)
     closePurge()
-    message.value = locale.value === 'zh-CN' ? '已彻底删除' : 'Deleted'
+    message.value = t('items.purged')
+    messageError.value = false
     await load()
   } catch (e) {
     purgeError.value = e.message
@@ -227,251 +335,281 @@ async function confirmPurge() {
 </script>
 
 <template>
-  <div class="items-layout">
-    <GuideSidebar :default-open="false" />
-
-    <!-- Main content -->
-    <div class="items-main">
-    <div class="items-toolbar">
-      <div class="toolbar-row">
-        <div class="search-box">
-          <input
-            v-model="q"
-            :placeholder="t('items.search')"
-            @keydown.enter="search"
-          />
-          <button type="button" class="secondary" @click="search" title="刷新">↻</button>
-        </div>
-        <label class="inactive-toggle">
-          <input type="checkbox" v-model="showInactive" @change="search" />
-          {{ locale === 'zh-CN' ? '显示已停用' : 'Show inactive' }}
-        </label>
+  <div class="items-page">
+    <div class="toolbar card">
+      <div class="search-box">
+        <input
+          v-model="q"
+          :placeholder="t('items.search')"
+          @keydown.enter="search"
+        />
+        <button type="button" class="secondary" @click="search">↻</button>
       </div>
 
-      <div class="toolbar-row">
-        <button type="button" @click="openCreate">{{ t('items.add') }}</button>
-        <a class="btn secondary" :href="api.templateUrl()" download>{{ t('items.template') }}</a>
-        <label class="btn secondary">
-          {{ t('items.import') }}
-          <input type="file" accept=".csv" hidden @change="onImport" />
-        </label>
-        <a class="btn secondary" :href="api.exportCsvUrl()" download>{{ t('items.export') }}</a>
-      </div>
+      <label class="switch">
+        <input v-model="showInactive" type="checkbox" @change="search" />
+        <span>{{ t('items.showInactive') }}</span>
+      </label>
+
+      <span class="spacer"></span>
+
+      <a class="btn secondary" :href="api.templateUrl()" download>{{ t('items.template') }}</a>
+      <label class="btn secondary import-btn">
+        {{ t('items.import') }}
+        <input type="file" accept=".csv" hidden @change="onImport" />
+      </label>
+      <a class="btn secondary" :href="api.exportCsvUrl()" download>{{ t('items.export') }}</a>
+      <button type="button" @click="openCreate">+ {{ t('items.add') }}</button>
     </div>
 
-    <!-- Form -->
-    <div v-if="showForm" class="card form-grid" style="margin-top: 16px">
-      <h3 style="margin: 0 0 4px; grid-column: 1 / -1">{{ formTitle }}</h3>
+    <p v-if="message" class="msg" :class="messageError ? 'error' : 'ok'">{{ message }}</p>
 
-      <div>
-        <label>{{ t('item.nameZh') }}</label>
-        <input v-model="form.name_zh" />
-      </div>
-      <div>
-        <label>{{ t('item.nameEn') }}</label>
-        <input v-model="form.name_en" />
-      </div>
-      <div>
-        <label>{{ t('item.program') }}</label>
-        <select v-model="form.program">
-          <option>FRC</option>
-          <option>FTC</option>
-          <option>BOTH</option>
-        </select>
-      </div>
-      <div>
-        <label>{{ t('item.trackMode') }}</label>
-        <select v-model="form.track_mode">
-          <option value="SNP">{{ t('item.snp') }}</option>
-          <option value="BLK">{{ t('item.blk') }}</option>
-        </select>
-        <small v-if="editingId" style="color: var(--warn)">⚠ 修改模式将自动生成新条码</small>
-      </div>
-      <div>
-        <label>{{ t('item.category') }}</label>
-        <select v-model="form.category">
-          <option v-for="c in categories" :key="c.id" :value="c.name_zh">
-            {{ c.name_zh }}{{ c.name_en ? ' / ' + c.name_en : '' }}
-          </option>
-        </select>
-      </div>
-      <div>
-        <label>Spec / 规格</label>
-        <input v-model="form.spec" />
-      </div>
-      <div>
-        <label>{{ t('item.unit') }}</label>
-        <input v-model="form.unit" />
-      </div>
-      <div>
-        <label>{{ t('item.minStock') }}</label>
-        <input v-model.number="form.min_stock" type="number" min="0" />
-        <small style="color: var(--muted)">低于此数量触发预警</small>
-      </div>
-      <div>
-        <label>{{ t('item.location') }}</label>
-        <select v-model="form.location_id">
-          <option :value="null">—</option>
-          <option v-for="loc in locations" :key="loc.id" :value="loc.id">
-            {{ loc.code }}{{ loc.name_zh ? ' ' + loc.name_zh : '' }}
-          </option>
-        </select>
-      </div>
-      <div>
-        <label>{{ t('scan.note') }}</label>
-        <input v-model="form.note" />
-      </div>
-      <div v-if="!editingId">
-        <label>初始库存</label>
-        <input v-model.number="form.quantity_initial" type="number" min="0" />
-      </div>
-
-      <div class="row-actions" style="grid-column: 1 / -1; margin-top: 0">
-        <button type="button" :disabled="saving" @click="submitForm">{{ t('common.save') }}</button>
-        <button type="button" class="secondary" @click="showForm = false; resetForm()">{{ t('common.cancel') }}</button>
-      </div>
-    </div>
-
-    <p v-if="message" class="msg ok">{{ message }}</p>
-
-    <!-- Table -->
-    <div class="table-wrap card" style="margin-top: 16px">
+    <div class="table-wrap card table-card">
       <table>
         <thead>
           <tr>
             <th>{{ t('item.barcode') }}</th>
             <th>{{ t('item.nameZh') }}</th>
-            <th>{{ t('item.stock') }}</th>
-            <th>{{ t('item.minStock') }}</th>
+            <th class="num">{{ t('item.stock') }}</th>
+            <th class="num">{{ t('item.minStock') }}</th>
             <th>{{ t('item.program') }}</th>
             <th>{{ t('item.category') }}</th>
-            <th></th>
+            <th class="actions-col"></th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="it in items" :key="it.id" :class="{ 'row-off': !it.active, 'row-low': it.quantity <= 0, 'row-warn': it.quantity > 0 && it.min_stock > 0 && it.quantity < it.min_stock }">
-            <td style="font-family: monospace; font-size: 0.85rem">{{ it.barcode }}</td>
+          <tr
+            v-for="it in items"
+            :key="it.id"
+            :class="{ 'row-off': !it.active }"
+          >
+            <td class="mono">{{ it.barcode }}</td>
             <td>
-              <div>{{ displayName(it) }}</div>
-              <small v-if="it.spec" style="color: var(--muted)">{{ it.spec }}</small>
+              <div class="item-name">{{ displayName(it) }}</div>
+              <div v-if="it.spec" class="item-spec">{{ it.spec }}</div>
             </td>
-            <td>
-              <span class="stock-num" :class="{ zero: it.quantity <= 0, low: it.quantity > 0 && it.min_stock > 0 && it.quantity < it.min_stock }">
-                {{ it.quantity }}
-              </span>
+            <td class="num">
+              <span
+                class="stock-num"
+                :class="{
+                  zero: it.quantity <= 0,
+                  low: it.quantity > 0 && it.min_stock > 0 && it.quantity < it.min_stock,
+                }"
+              >{{ it.quantity }}</span>
             </td>
-            <td style="color: var(--muted)">{{ it.min_stock || '—' }}</td>
+            <td class="num muted">{{ it.min_stock || '—' }}</td>
             <td>{{ it.program }}</td>
             <td>{{ it.category }}</td>
-            <td>
-              <button type="button" class="secondary" style="padding:4px 10px;font-size:0.8rem" @click="openEdit(it)">
-                {{ locale === 'zh-CN' ? '编辑' : 'Edit' }}
+            <td class="actions-col">
+              <button type="button" class="secondary btn-sm" @click="openEdit(it)">
+                {{ t('common.edit') }}
               </button>
               <button
                 v-if="it.active"
                 type="button"
-                class="danger"
-                style="padding:4px 10px;font-size:0.8rem;margin-left:4px"
+                class="secondary btn-sm"
                 @click="deleteItem(it.id)"
               >{{ t('common.delete') }}</button>
               <button
                 v-else
                 type="button"
-                class="secondary"
-                style="padding:4px 10px;font-size:0.8rem;margin-left:4px"
+                class="secondary btn-sm"
                 @click="activateItem(it.id)"
-              >{{ locale === 'zh-CN' ? '启用' : 'Activate' }}</button>
+              >{{ t('items.activate') }}</button>
               <button
                 type="button"
-                class="danger"
-                style="padding:4px 10px;font-size:0.8rem;margin-left:4px"
+                class="danger btn-sm"
+                :title="t('items.purgeTitle')"
                 @click="askPurge(it)"
-                :title="locale === 'zh-CN' ? '彻底删除（不可恢复）' : 'Purge permanently'"
-              >{{ locale === 'zh-CN' ? '删除' : 'Delete' }}</button>
+              >{{ t('common.purge') }}</button>
+            </td>
+          </tr>
+          <tr v-if="!items.length">
+            <td colspan="7" class="empty-hint">
+              {{ t('items.empty') }}
             </td>
           </tr>
         </tbody>
       </table>
-      <div class="pager" style="display:flex;align-items:center;gap:10px;margin-top:8px;color:var(--muted)">
-        <button type="button" class="secondary" style="padding:2px 10px;font-size:0.8rem" :disabled="page <= 1" @click="prevPage">‹</button>
-        <span>{{ page }} / {{ totalPages }} · {{ total }} total</span>
-        <button type="button" class="secondary" style="padding:2px 10px;font-size:0.8rem" :disabled="page >= totalPages" @click="nextPage">›</button>
+
+      <div class="pager">
+        <button type="button" class="secondary btn-sm" :disabled="page <= 1" @click="prevPage">‹</button>
+        <span>{{ page }} / {{ totalPages }} · {{ total }}</span>
+        <button type="button" class="secondary btn-sm" :disabled="page >= totalPages" @click="nextPage">›</button>
       </div>
     </div>
-    </div><!-- /items-main -->
-  </div><!-- /items-layout -->
 
-  <!-- Purge confirm modal -->
-  <div v-if="purgeTarget" class="modal-mask" @click.self="closePurge">
-    <div class="modal">
-      <h3 class="modal-title">⚠ {{ locale === 'zh-CN' ? '彻底删除物资' : 'Permanently delete item' }}</h3>
-      <p>
-        {{ locale === 'zh-CN' ? '即将删除物资' : 'You are about to delete' }}
-        <b style="color: var(--text)">{{ purgeTarget ? displayName(purgeTarget) : '' }}</b>
-        {{ locale === 'zh-CN' ? '的档案、库存和全部出入库流水，此操作无法恢复！' : '— its record, stock and all transaction history. This cannot be undone!' }}
-      </p>
-      <label>{{ locale === 'zh-CN' ? '删除保护密码' : 'Purge password' }}</label>
-      <input
-        v-model="purgePassword"
-        type="password"
-        :placeholder="locale === 'zh-CN' ? '输入密码以确认删除' : 'Enter password to confirm'"
-        @keydown.enter.prevent="confirmPurge"
-      />
-      <p v-if="purgeError" class="msg error" style="margin: 10px 0 0">{{ purgeError }}</p>
-      <div class="modal-actions">
-        <button type="button" class="secondary" @click="closePurge" :disabled="purgeBusy">
-          {{ locale === 'zh-CN' ? '取消' : 'Cancel' }}
-        </button>
-        <button type="button" class="danger" @click="confirmPurge" :disabled="purgeBusy">
-          {{ purgeBusy ? (locale === 'zh-CN' ? '删除中…' : 'Deleting…') : (locale === 'zh-CN' ? '确认删除' : 'Delete') }}
-        </button>
+    <!-- create / edit -->
+    <div v-if="showForm" class="modal-mask" @click.self="closeForm">
+      <div class="modal">
+        <h3 class="modal-title">{{ formTitle }}</h3>
+
+        <div class="form-grid">
+          <div>
+            <label>{{ t('item.nameZh') }}</label>
+            <input v-model="form.name_zh" />
+          </div>
+          <div>
+            <label>{{ t('item.nameEn') }}</label>
+            <input v-model="form.name_en" />
+          </div>
+
+          <div class="span-2">
+            <label>{{ t('item.barcode') }}</label>
+            <input
+              v-model="form.barcode"
+              class="mono-input"
+              autocomplete="off"
+              spellcheck="false"
+              :placeholder="editingId ? t('items.barcodeKeep') : t('items.barcodeAuto')"
+            />
+            <small>{{ barcodeHint }}</small>
+          </div>
+
+          <div>
+            <label>{{ t('item.program') }}</label>
+            <select v-model="form.program">
+              <option>FRC</option>
+              <option>FTC</option>
+              <option>BOTH</option>
+            </select>
+          </div>
+          <div>
+            <label>{{ t('item.trackMode') }}</label>
+            <select v-model="form.track_mode">
+              <option value="SNP">{{ t('item.snp') }}</option>
+              <option value="BLK">{{ t('item.blk') }}</option>
+            </select>
+            <small v-if="editingId && originalBarcodeAuto">⚠ 改项目或模式会重新生成条码；填入自带条码后不会再变</small>
+          </div>
+
+          <div class="span-2">
+            <div class="field-head">
+              <label>{{ t('item.category') }}</label>
+              <button type="button" class="link-btn" @click="openGuide">{{ t('items.guideLink') }}</button>
+            </div>
+            <div class="cat-grid">
+              <button
+                v-for="c in categories"
+                :key="c.id"
+                type="button"
+                class="cat-chip"
+                :class="{ active: form.category === c.name_zh }"
+                @click="pickCategory(c.name_zh)"
+              >
+                <span class="cat-name">
+                  {{ c.name_zh }}<em v-if="c.name_en">{{ c.name_en }}</em>
+                </span>
+                <span v-if="categoryDesc(c)" class="cat-desc">{{ categoryDesc(c) }}</span>
+              </button>
+            </div>
+            <p v-if="autoSuggested" class="cat-hint">
+              {{ t('items.autoSuggested', { name: form.category }) }}
+            </p>
+          </div>
+          <div>
+            <label>{{ t('item.location') }}</label>
+            <select v-model="form.location_id">
+              <option :value="null">—</option>
+              <option v-for="loc in locations" :key="loc.id" :value="loc.id">
+                {{ loc.code }}{{ loc.name_zh ? ' ' + loc.name_zh : '' }}
+              </option>
+            </select>
+          </div>
+
+          <div>
+            <label>Spec / 规格</label>
+            <input v-model="form.spec" />
+          </div>
+          <div>
+            <label>{{ t('item.unit') }}</label>
+            <input v-model="form.unit" />
+          </div>
+
+          <div>
+            <label>{{ t('item.minStock') }}</label>
+            <input v-model.number="form.min_stock" type="number" min="0" />
+          </div>
+          <div v-if="!editingId">
+            <label>{{ t('items.initialQty') }}</label>
+            <input v-model.number="form.quantity_initial" type="number" min="0" />
+          </div>
+          <div v-else>
+            <label>{{ t('item.stock') }}</label>
+            <input v-model.number="form.stock_qty" type="number" min="0" />
+            <small>{{ t('items.stockHint') }}</small>
+          </div>
+
+          <div class="span-2">
+            <label>{{ t('scan.note') }}</label>
+            <input v-model="form.note" />
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" class="secondary" @click="closeForm">{{ t('common.cancel') }}</button>
+          <button type="button" :disabled="saving" @click="submitForm">
+            {{ saving ? t('common.loading') : t('common.save') }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- purge confirm -->
+    <div v-if="purgeTarget" class="modal-mask" @click.self="closePurge">
+      <div class="modal narrow">
+        <h3 class="modal-title danger-title">
+          ⚠ {{ t('items.purgeTitle') }}
+        </h3>
+        <p class="modal-text">
+          {{ t('items.purgeWarn') }}
+        </p>
+        <div class="purge-target">
+          <strong>{{ displayName(purgeTarget) }}</strong>
+          <span class="mono">{{ purgeTarget.barcode }}</span>
+        </div>
+        <label>{{ t('items.purgePassword') }}</label>
+        <input
+          v-model="purgePassword"
+          type="password"
+          :placeholder="t('items.purgePasswordHint')"
+          @keydown.enter.prevent="confirmPurge"
+        />
+        <p v-if="purgeError" class="msg error">{{ purgeError }}</p>
+        <div class="modal-actions">
+          <button type="button" class="secondary" @click="closePurge" :disabled="purgeBusy">
+            {{ t('common.cancel') }}
+          </button>
+          <button type="button" class="danger-solid" @click="confirmPurge" :disabled="purgeBusy">
+            {{ purgeBusy ? t('common.loading') : t('items.purgeConfirm') }}
+          </button>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* ---- layout ---- */
-.items-layout {
-  display: flex;
-  gap: 16px;
-  min-height: 0;
-  align-items: flex-start;
-}
-
-.items-main {
-  flex: 1;
-  min-width: 0;
-}
-
-/* ---- toolbar ---- */
-.items-toolbar {
+.items-page {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-bottom: 16px;
+  gap: 14px;
 }
 
-.toolbar-row {
+.toolbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
   align-items: center;
-}
-
-/* 工具栏内按钮统一紧凑尺寸，避免挤占 */
-.toolbar-row .btn,
-.toolbar-row button {
-  padding: 8px 14px;
-  font-size: 0.9rem;
+  gap: 10px;
+  padding: 12px 14px;
 }
 
 .search-box {
   display: flex;
+  gap: 6px;
   flex: 1;
   min-width: 220px;
-  max-width: 420px;
-  gap: 8px;
+  max-width: 380px;
 }
 
 .search-box input {
@@ -479,96 +617,210 @@ async function confirmPurge() {
   min-width: 0;
 }
 
-.inactive-toggle {
+.search-box button {
+  flex: none;
+  padding: 0 12px;
+}
+
+.switch {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: 0.8125rem;
   cursor: pointer;
   white-space: nowrap;
-  padding: 9px 14px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--muted);
-  font-size: 0.9rem;
-  font-weight: 600;
 }
 
-.inactive-toggle input {
+.switch input {
   width: auto;
   margin: 0;
   padding: 0;
 }
 
-.form-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px 16px;
-}
-.form-grid label {
-  display: block;
-  font-size: 0.85rem;
-  color: var(--muted);
-  margin-bottom: 3px;
-}
-@media (max-width: 500px) {
-  .form-grid { grid-template-columns: 1fr; }
+.switch span {
+  font-weight: 600;
 }
 
-.stock-num { font-weight: 700; color: var(--success); }
+.spacer {
+  flex: 1;
+}
+
+.import-btn {
+  cursor: pointer;
+}
+
+.table-card {
+  padding: 6px 14px 14px;
+}
+
+.item-name {
+  font-weight: 600;
+}
+
+.item-spec {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.actions-col {
+  width: 1%;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 0.75rem;
+}
+
+.stock-num {
+  font-weight: 700;
+  color: var(--success);
+}
+
 .stock-num.low { color: var(--warn); }
 .stock-num.zero { color: var(--danger); }
 
-.row-low { background: rgba(246,109,109,0.06); }
-.row-warn { background: rgba(245,166,35,0.06); }
-.row-off { opacity: 0.55; }
+.row-off {
+  opacity: 0.5;
+}
 
-/* ---- purge confirm modal ---- */
-.modal-mask {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+/* category picker */
+.field-head {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-}
-
-.modal {
-  width: 420px;
-  max-width: calc(100vw - 40px);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 20px;
-}
-
-.modal-title {
-  margin: 0 0 10px;
-  color: var(--danger);
-  font-size: 1.1rem;
-}
-
-.modal p {
-  margin: 0 0 14px;
-  color: var(--muted);
-  font-size: 0.95rem;
-  line-height: 1.5;
-}
-
-.modal label {
-  display: block;
-  font-size: 0.85rem;
-  color: var(--muted);
-  margin-bottom: 4px;
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
+  align-items: baseline;
+  justify-content: space-between;
   gap: 10px;
-  margin-top: 16px;
+  margin-bottom: 6px;
 }
 
-small { display: block; margin-top: 2px; }
+.field-head label {
+  margin-bottom: 0;
+}
+
+.link-btn {
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.link-btn:hover:not(:disabled) {
+  background: transparent;
+  text-decoration: underline;
+}
+
+.cat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 6px;
+}
+
+.cat-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 10px;
+  text-align: left;
+  white-space: normal;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-soft);
+  font-weight: 500;
+}
+
+.cat-chip:hover:not(:disabled) {
+  background: var(--surface-3);
+  border-color: var(--border-strong);
+}
+
+.cat-chip.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--text);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.cat-name {
+  font-size: 0.8125rem;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.cat-name em {
+  margin-left: 5px;
+  font-style: normal;
+  font-weight: 500;
+  font-size: 0.6875rem;
+  color: var(--muted);
+}
+
+.cat-desc {
+  font-size: 0.6875rem;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
+.cat-hint {
+  margin: 8px 0 0;
+  font-size: 0.75rem;
+  color: var(--success);
+}
+
+.mono-input {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  letter-spacing: 0.02em;
+}
+
+.narrow {
+  width: 420px;
+}
+
+.danger-title {
+  color: var(--danger);
+}
+
+.modal-text {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.purge-target {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.danger-solid {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+.danger-solid:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
 </style>

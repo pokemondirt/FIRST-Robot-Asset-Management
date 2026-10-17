@@ -19,36 +19,46 @@ FRC + FTC 共用 · 扫码枪自助出入库
 
 ## 快速启动（开发）
 
+在项目根目录双击 `start.cmd`，或：
+
 ```powershell
-cd <项目目录>
-.\start.ps1
+.\start.cmd
 ```
 
-> 若提示"未对文件进行数字签名"，说明本机执行策略较严，改用
-> `powershell -ExecutionPolicy Bypass -File .\start.ps1`（其余脚本同理）。
-
-浏览器打开：**http://127.0.0.1:5173/#/checkout**
+浏览器会打开 **http://127.0.0.1:5173/#/checkout**。
 
 - 后端 API：`http://127.0.0.1:8000`
 - 前端开发服：`5173`（通过 Vite 代理访问 `/api`）
 
-仅启动 Go 后端：
+### 为什么入口是 .cmd 而不是 .ps1
+
+Windows 默认执行策略（`RemoteSigned`）会拒绝运行未签名的 `.ps1`；个别目录还会让 PowerShell
+直接报 `AuthorizationManager check failed`，即使策略本身允许该文件。`.cmd` 启动器内部用
+`-ExecutionPolicy Bypass` 调用 PowerShell，两种情况都能正常启动，也不需要修改系统设置。
+
+如果确实想直接跑 `.ps1`：
 
 ```powershell
-.\start-go.ps1
+powershell -ExecutionPolicy Bypass -File .\start.ps1
 ```
 
-仅启动前端开发服：
+可用启动器：
 
-```powershell
-.\start-frontend.ps1
-```
+| 启动器 | 作用 |
+|--------|------|
+| `start.cmd` | 开发模式：Go 后端 + Vite 开发服 |
+| `start-one-port.cmd` | 构建前端并以单端口 8000 运行 |
+| `start-go.cmd` | 仅启动 Go 后端 |
+| `build-frontend.cmd` | 构建前端到 `frontend/dist` |
+| `build-release.cmd` | 打跨平台发布包 |
+
+仅启动前端开发服：`powershell -ExecutionPolicy Bypass -File .\start-frontend.ps1`
 
 ## 单端口部署（仓库电脑）
 
 ```powershell
-.\build-frontend.ps1
-.\start-go.ps1
+.\build-frontend.cmd
+.\start-go.cmd
 ```
 
 浏览器：**http://127.0.0.1:8000/#/checkout**
@@ -70,10 +80,18 @@ cd <项目目录>
 2. 双击 `start.bat`（或先运行 `install-desktop.bat` 建桌面快捷方式）
 3. 首次启动 Windows 防火墙会询问，勾选「专用网络」并允许
 
-数据库在解压目录的 `data\inventory.db`，**升级时只替换程序文件、保留 `data\` 即可**。
+**前端已经编进 exe 里**，包里没有 `dist` 目录：`inventory-server.exe` 一个文件就能跑，
+双击它和在 Go 里 `go build` 出来的是同一个东西。`build-frontend.cmd` 会把 `frontend/dist`
+拷到 `backend-go/webembed/dist` 再编进去。
+
+数据库在解压目录的 `data\inventory.db`（首次运行自动创建），**升级时只替换 exe、保留 `data\` 即可**。
 
 > 本机 Go 工具链是 32 位的（`GOARCH=386`），所以脚本里始终显式指定目标架构；
 > 否则会不小心发出一个 32 位版本。
+
+> 开发时如果想改完前端立刻生效、不重新编译 exe：把前端跑在 Vite（`start.cmd`）或先
+> `build-frontend.cmd` 再 `start-go.cmd`。服务器会**优先使用磁盘上的 `frontend/dist`**，
+> 找不到才用 exe 里内置的那份。
 
 ## 局域网共用
 
@@ -88,6 +106,32 @@ Server starting on http://127.0.0.1:8000
 注意：**系统没有登录功能**，能访问到该地址的人都能修改库存。请只在可信的仓库内网使用，
 不要做端口转发或暴露到公网。跨站脚本调用已被拦截（见 `guardMiddleware`），
 但这只防浏览器被第三方网页利用，不防局域网内的直接访问。
+
+## 扫码与输入法
+
+扫码枪在系统里等同于键盘。如果 Windows 当前是**中文输入法**，扫进来的字符会进入拼音组字，
+轻则查不到条码，重则把组字内容当成条码提交。
+
+页面做了两层防护：
+
+1. **自动丢弃**：扫码框一旦检测到输入法组字（`compositionstart`）或非 ASCII 字符，
+   会立即清空输入并红字提示「检测到中文输入法，这次输入已丢弃」，**不会把错误内容发给服务器**。
+2. **提示常驻**：扫码框下方有一行小字，提醒扫码前确认输入法是英文（`Shift` 切换）。
+
+如果你希望**真的自动切换**——注意：网页无法修改系统输入法（浏览器没有这个 API），
+所以额外提供了一个可选的 Windows 助手：
+
+```powershell
+scripts\ime\start-ime-helper.cmd
+```
+
+它只在「出入库」页的扫码框获得焦点时把输入法切到英文，光标离开就停止干预；`Ctrl+C` 停止。
+原理是页面把"扫码框聚焦"通过窗口标题里的一个零宽字符发布出来，助手轮询后调用
+`ImmSetConversionStatus`。个别浏览器/输入法组合下可能不生效，此时页面自身的防护仍然有效。
+
+不想跑助手的话，也可以在 Windows 里做一次性设置：**设置 → 时间和语言 → 输入 →
+高级键盘设置 → 勾选「允许我为每个应用窗口使用不同的输入法」**，然后在浏览器里切一次英文，
+浏览器就会记住英文状态（其它程序仍是中文）。
 
 ## 发布到 GitHub Releases
 
@@ -105,7 +149,7 @@ git push origin v1.0.0
 
 ## 功能
 
-- 入库 / 出库 / 归还 / 查询（扫码枪）
+- 入库 / 出库（扫码枪直扫即生效，归还按入库处理）
 - 展板：今日入库、库存预警（`#/board`）
 - 物资档案、分类管理、操作人
 - CSV 导入 / 导出
@@ -120,13 +164,14 @@ git push origin v1.0.0
 ## 项目结构
 
 ```
-backend-go/     Go HTTP API + 可选托管 frontend/dist
+backend-go/     Go HTTP API，webembed/ 里内嵌构建好的前端
 frontend/       Vue 3 界面
 start.ps1       开发：Go + Vite
 start-go.ps1    仅 Go 后端
-build-frontend.ps1
-build-release.ps1   交叉编译出免安装发布包（scripts/release/out/）
+build-frontend.ps1  构建前端并写入 backend-go/webembed/dist
+build-release.ps1   交叉编译出单文件免安装发布包（scripts/release/out/）
 scripts/release/    发布包模板（start.bat / open-browser.ps1 / 说明）
+scripts/ime/        可选：扫码时自动切英文输入法
 .github/workflows/  CI 与自动发布
 LICENSE             MIT
 CHANGELOG.md        版本变更记录

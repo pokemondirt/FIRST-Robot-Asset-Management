@@ -3,9 +3,12 @@ FIRST Robotics Inventory - 使用说明
 
 一、安装（目标电脑无需安装 Go / Node.js）
   1. 把整个文件夹解压到任意位置（建议 D:\FIRST-Robot-Inventory）
-  2. 双击 start.bat 启动
+  2. 双击 start.bat 启动（或直接双击 inventory-server.exe）
   3. 首次启动 Windows 防火墙会弹窗询问，请勾选「专用网络」并点「允许访问」
      （勾选后同一局域网的其他电脑才能打开本系统）
+
+  说明：inventory-server.exe 是单文件程序，网页界面已经内置在 exe 里，
+        不需要额外的 dist 文件夹，也不需要 Internet 连接。
 
 二、日常使用
   1. 双击 start.bat（或桌面快捷方式 FIRST-Inventory）

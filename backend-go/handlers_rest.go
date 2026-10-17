@@ -647,7 +647,16 @@ func handleImport(w http.ResponseWriter, r *http.Request) {
 			errs = append(errs, fmt.Sprintf("Row %d: %s", rowNum, msg))
 			continue
 		}
-		if barcode == "" {
+		barcodeAuto := 1
+		if barcode != "" {
+			// A barcode supplied in the CSV is the item's own (for example the
+			// manufacturer's), so it must not be renumbered later.
+			if msg := checkBarcode(barcode); msg != "" {
+				errs = append(errs, fmt.Sprintf("Row %d: %s", rowNum, msg))
+				continue
+			}
+			barcodeAuto = 0
+		} else {
 			// Query inside the transaction: sees rows inserted by this import
 			// and does not deadlock the single-connection pool.
 			barcode = nextBarcode(tx, program, trackMode)
@@ -663,7 +672,9 @@ func handleImport(w http.ResponseWriter, r *http.Request) {
 
 		category := getField(row, "category")
 		if category == "" {
-			category = "MISC"
+			// Matches the seeded catch-all category; "MISC" is only its English
+			// label and would land the row in a category that does not exist.
+			category = "其他"
 		}
 		spec := getField(row, "spec")
 		unit := getField(row, "unit")
@@ -725,9 +736,9 @@ func handleImport(w http.ResponseWriter, r *http.Request) {
 		}
 
 		result, err := tx.Exec(`
-			INSERT INTO items (barcode, program, track_mode, name_zh, name_en, category, spec, unit, min_stock, location_id, note, active, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, barcode, program, trackMode, nameZh, nameEn, category, spec, unit, minStock, locationID, note, 1, nowSQL())
+			INSERT INTO items (barcode, program, track_mode, name_zh, name_en, category, spec, unit, min_stock, location_id, note, active, created_at, barcode_auto)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, barcode, program, trackMode, nameZh, nameEn, category, spec, unit, minStock, locationID, note, 1, nowSQL(), barcodeAuto)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("Row %d: %v", rowNum, err))
 			continue

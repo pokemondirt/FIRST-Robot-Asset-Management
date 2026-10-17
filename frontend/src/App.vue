@@ -3,9 +3,16 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api } from './api/client'
+import { useTheme } from './composables/useTheme'
+import { useUi } from './composables/useUi'
+import AppDrawer from './components/AppDrawer.vue'
+import CategoryGuide from './components/CategoryGuide.vue'
 
 const { t, locale } = useI18n()
 const route = useRoute()
+const { preference: themePref, cycleTheme } = useTheme()
+const { guideOpen, openGuide } = useUi()
+
 const isFullscreen = computed(() => route.meta.fullscreen === true)
 
 function toggleLocale() {
@@ -13,10 +20,17 @@ function toggleLocale() {
   localStorage.setItem('locale', locale.value)
 }
 
-// ---- alert sidebar ----
+const themeTitle = computed(() => {
+  if (themePref.value === 'auto') return t('theme.auto')
+  return themePref.value === 'light' ? t('theme.light') : t('theme.dark')
+})
+
+// ---- drawers ----
+const showAlerts = ref(false)
+
+// ---- alert data ----
 const alerts = ref([])
 const alertCount = ref(0)
-const sidebarOpen = ref(false)
 let timer = null
 
 async function loadAlerts() {
@@ -44,257 +58,236 @@ function alertName(a) {
 </script>
 
 <template>
-  <div class="layout" :class="{ 'layout-board': isFullscreen }">
-    <header v-if="!isFullscreen" class="header">
-      <div>
-        <h1>{{ t('app.title') }}</h1>
-        <small style="color: var(--muted)">{{ t('app.subtitle') }}</small>
+  <div class="app">
+    <header v-if="!isFullscreen" class="topbar">
+      <div class="brand">
+        <strong>{{ t('app.title') }}</strong>
+        <span>{{ t('app.subtitle') }}</span>
       </div>
-      <button class="secondary" type="button" @click="toggleLocale">
-        {{ locale === 'zh-CN' ? 'EN' : '中文' }}
-      </button>
-    </header>
-    <nav v-if="!isFullscreen" class="nav">
-      <router-link to="/checkout">{{ t('nav.checkout') }}</router-link>
-      <router-link to="/items">{{ t('nav.items') }}</router-link>
-      <router-link to="/history">{{ t('nav.history') }}</router-link>
-      <router-link to="/board">{{ t('nav.board') }}</router-link>
-      <router-link to="/settings">{{ t('nav.settings') }}</router-link>
-    </nav>
-    <div class="body-row">
-      <main class="main" :class="{ 'main-board': isFullscreen }">
-        <router-view />
-      </main>
 
-      <!-- alert sidebar -->
-      <aside class="alert-sidebar" :class="{ open: sidebarOpen }">
+      <nav class="nav">
+        <router-link to="/checkout" class="nav-link">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <path d="M4 8V5a1 1 0 0 1 1-1h3M20 8V5a1 1 0 0 0-1-1h-3M4 16v3a1 1 0 0 0 1 1h3M20 16v3a1 1 0 0 1-1 1h-3" stroke-linecap="round" />
+            <path d="M7 12h10" stroke-linecap="round" />
+          </svg>
+          <span>{{ t('nav.checkout') }}</span>
+        </router-link>
+        <router-link to="/items" class="nav-link">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <path d="M3.5 7.5 12 3l8.5 4.5v9L12 21l-8.5-4.5z" stroke-linejoin="round" />
+            <path d="M3.5 7.5 12 12l8.5-4.5M12 12v9" stroke-linejoin="round" />
+          </svg>
+          <span>{{ t('nav.items') }}</span>
+        </router-link>
+        <router-link to="/history" class="nav-link">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <path d="M4 6h16M4 12h16M4 18h10" stroke-linecap="round" />
+          </svg>
+          <span>{{ t('nav.history') }}</span>
+        </router-link>
+      </nav>
+
+      <div class="topbar-actions">
         <button
-          class="sidebar-toggle"
-          @click="sidebarOpen = !sidebarOpen"
-          :title="sidebarOpen ? '收起' : '库存预警'"
+          type="button"
+          class="icon-btn"
+          :title="t('alerts.title')"
+          @click="showAlerts = true"
         >
-          <span v-if="!sidebarOpen" class="toggle-icon">!</span>
-          <span v-else class="toggle-icon">×</span>
-          <span v-if="!sidebarOpen && alertCount > 0" class="toggle-badge">{{ alertCount }}</span>
-          <span v-if="!sidebarOpen" class="toggle-label">预警</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <path d="M12 3a6 6 0 0 0-6 6v4l-1.5 3h15L18 13V9a6 6 0 0 0-6-6Z" stroke-linejoin="round" />
+            <path d="M10 19a2 2 0 0 0 4 0" stroke-linecap="round" />
+          </svg>
+          <span v-if="alertCount > 0" class="icon-badge">{{ alertCount }}</span>
         </button>
 
-        <div v-if="sidebarOpen" class="sidebar-body">
-          <h3 class="sidebar-title">
-            库存预警
-            <span class="badge" :class="{ hot: alertCount > 0 }">{{ alertCount }}</span>
-          </h3>
+        <button
+          type="button"
+          class="nav-link guide-btn"
+          :title="t('guide.title')"
+          @click="openGuide"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <path d="M4.5 5.5A1.5 1.5 0 0 1 6 4h5v16H6a1.5 1.5 0 0 1-1.5-1.5z" stroke-linejoin="round" />
+            <path d="M19.5 5.5A1.5 1.5 0 0 0 18 4h-5v16h5a1.5 1.5 0 0 0 1.5-1.5z" stroke-linejoin="round" />
+          </svg>
+          <span>{{ t('nav.guide') }}</span>
+        </button>
 
-          <ul v-if="alerts.length" class="sidebar-list">
-            <li
-              v-for="a in alerts"
-              :key="a.id"
-              :class="a.level"
-            >
-              <div class="si-name">{{ alertName(a) }}</div>
-              <div class="si-code">{{ a.barcode }}</div>
-              <div class="si-row">
-                <span class="si-stock">
-                  库存 <b :class="a.level">{{ a.quantity }}</b>
-                  <template v-if="a.min_stock > 0"> / {{ a.min_stock }}</template>
-                  {{ a.unit }}
-                </span>
-                <span class="si-tag" :class="a.level">
-                  {{ a.level === 'critical' ? '缺货' : '偏低' }}
-                </span>
-              </div>
-            </li>
-          </ul>
-          <p v-else class="si-ok">库存正常 ✓</p>
-        </div>
-      </aside>
-    </div>
+        <span class="divider" aria-hidden="true"></span>
+
+        <router-link to="/board" class="nav-link board-link">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="12" rx="1.5" />
+            <path d="M9 20h6M12 16v4" stroke-linecap="round" />
+          </svg>
+          <span>{{ t('nav.board') }}</span>
+        </router-link>
+
+        <router-link to="/settings" class="icon-btn" :title="t('nav.settings')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2 2 2 0 1 1-4 0 1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3.6 15a2 2 0 1 1 0-4 1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10.5 4a2 2 0 1 1 4 0 1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0 1.2 2.9 2 2 0 1 1 0 4Z" stroke-linejoin="round" />
+          </svg>
+        </router-link>
+
+        <button type="button" class="ghost-lang" @click="toggleLocale">
+          {{ locale === 'zh-CN' ? 'EN' : '中文' }}
+        </button>
+
+        <button type="button" class="icon-btn" :title="themeTitle" @click="cycleTheme">
+          <svg v-if="themePref === 'auto'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <circle cx="12" cy="12" r="7.5" />
+            <path d="M12 4.5v15" />
+            <path d="M12 4.5a7.5 7.5 0 0 1 0 15z" fill="currentColor" stroke="none" />
+          </svg>
+          <svg v-else-if="themePref === 'light'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <circle cx="12" cy="12" r="4" />
+            <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4" stroke-linecap="round" />
+          </svg>
+          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <path d="M20 13.5A8 8 0 0 1 10.5 4a8 8 0 1 0 9.5 9.5Z" stroke-linejoin="round" />
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="main" :class="{ 'main-board': isFullscreen }">
+      <router-view />
+    </main>
+
+    <!-- 库存预警 -->
+    <AppDrawer v-model="showAlerts" :title="t('alerts.title')">
+      <p v-if="!alerts.length" class="empty-hint">{{ t('alerts.none') }}</p>
+      <ul v-else class="alert-list">
+        <li v-for="a in alerts" :key="a.id" :class="a.level">
+          <div class="alert-main">
+            <strong>{{ alertName(a) }}</strong>
+            <span class="tag" :class="a.level === 'critical' ? 'critical' : 'warning'">
+              {{ a.level === 'critical' ? t('alerts.critical') : t('alerts.warning') }}
+            </span>
+          </div>
+          <div class="alert-meta">
+            <code class="mono">{{ a.barcode }}</code>
+            <span>
+              {{ t('alerts.stock') }}
+              <b>{{ a.quantity }}</b>
+              <template v-if="a.min_stock > 0"> / {{ a.min_stock }}</template>
+              {{ a.unit }}
+            </span>
+          </div>
+        </li>
+      </ul>
+    </AppDrawer>
+
+    <!-- 分类说明 -->
+    <AppDrawer v-model="guideOpen" :title="t('guide.title')" width="460px">
+      <CategoryGuide />
+    </AppDrawer>
   </div>
 </template>
 
 <style scoped>
-.body-row {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-}
-
-/* ---- sidebar ---- */
-.alert-sidebar {
-  position: relative;
-  flex-shrink: 0;
-  transition: width 0.2s ease;
-  width: 38px;
-  border-left: 1px solid var(--border);
-  background: var(--surface);
-}
-
-.alert-sidebar.open {
-  width: 280px;
-}
-
-.sidebar-toggle {
-  position: absolute;
-  top: 50%;
-  left: 0;
-  transform: translateY(-50%);
-  width: 38px;
-  height: 80px;
-  border-radius: 8px 0 0 8px;
-  background: var(--warn);
-  border: none;
-  color: #111;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  padding: 4px;
-  font-weight: 700;
-  z-index: 2;
-}
-
-.sidebar-toggle:hover {
-  opacity: 0.9;
-}
-
-.alert-sidebar.open .sidebar-toggle {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  color: var(--muted);
-}
-
-.toggle-icon {
-  font-size: 1rem;
-  line-height: 1;
-}
-
-.toggle-badge {
-  background: var(--danger);
-  color: #fff;
-  border-radius: 10px;
-  padding: 0 6px;
-  font-size: 0.7rem;
-  line-height: 1.4;
-}
-
-.toggle-label {
-  font-size: 0.65rem;
-  writing-mode: vertical-rl;
-  letter-spacing: 0.1em;
-}
-
-.sidebar-body {
-  padding: 14px 12px;
-  height: 100%;
-  overflow-y: auto;
-  margin-left: 38px;
-}
-
-.sidebar-title {
-  margin: 0 0 12px;
-  font-size: 0.95rem;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.badge {
+.divider {
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
   background: var(--border);
-  color: var(--text);
-  padding: 1px 8px;
-  border-radius: 12px;
-  font-size: 0.8rem;
+}
+
+/* The guide entry uses .nav-link styling but is a <button>, so the global
+   button background has to be reset. */
+.guide-btn {
+  background: transparent;
+  border-color: transparent;
   font-weight: 600;
 }
 
-.badge.hot {
-  background: var(--danger);
-  color: #fff;
+.guide-btn:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text);
 }
 
-.sidebar-list {
+.guide-btn svg {
+  width: 17px;
+  height: 17px;
+}
+
+.board-link {
+  border: 1px solid var(--border);
+  color: var(--text-soft);
+}
+
+.ghost-lang {
+  min-width: 44px;
+  height: 34px;
+  padding: 0 8px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-soft);
+  font-size: 0.8125rem;
+}
+
+.ghost-lang:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.alert-list {
   list-style: none;
   margin: 0;
   padding: 0;
-}
-
-.sidebar-list li {
-  padding: 10px;
-  margin-bottom: 8px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-}
-
-.sidebar-list li.critical {
-  border-color: var(--danger);
-  border-left: 3px solid var(--danger);
-}
-
-.si-name {
-  font-weight: 600;
-  font-size: 0.85rem;
-  margin-bottom: 2px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.si-code {
-  font-family: monospace;
-  font-size: 0.7rem;
-  color: var(--muted);
-  margin-bottom: 6px;
-}
-
-.si-row {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.si-stock {
-  font-size: 0.8rem;
+.alert-list li {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.alert-list li.critical {
+  border-left-color: var(--danger);
+}
+
+.alert-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.alert-main strong {
+  font-size: 0.875rem;
+}
+
+.alert-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 4px;
+  font-size: 0.8125rem;
   color: var(--muted);
 }
 
-.si-stock b {
+.alert-meta b {
   color: var(--text);
 }
 
-.si-stock b.critical {
-  color: var(--danger);
-}
-
-.si-tag {
-  font-size: 0.65rem;
-  font-weight: 700;
-  padding: 1px 6px;
-  border-radius: 3px;
-}
-
-.si-tag.critical {
-  background: var(--danger);
-  color: #fff;
-}
-
-.si-tag.warning {
-  background: var(--warn);
-  color: #111;
-}
-
-.si-ok {
-  text-align: center;
-  color: var(--success);
-  font-size: 0.9rem;
-  padding: 20px 0;
-}
-
-@media (max-width: 600px) {
-  .alert-sidebar.open {
-    width: 240px;
+@media (max-width: 900px) {
+  .board-link span {
+    display: none;
+  }
+  .board-link {
+    padding: 8px;
+  }
+  .divider {
+    display: none;
   }
 }
 </style>

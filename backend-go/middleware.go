@@ -2,11 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"io/fs"
 	"log"
 	"mime"
 	"net/http"
-	"os"
-	"path/filepath"
+	"path"
 	"strings"
 	"time"
 )
@@ -86,8 +86,10 @@ func writeError(w http.ResponseWriter, status int, detail any) {
 	writeJSON(w, status, map[string]any{"detail": detail})
 }
 
+// spaHandler serves the built UI from any fs.FS, so the same code works for a
+// dist folder on disk and for the copy embedded in the executable.
 type spaHandler struct {
-	distDir string
+	fsys fs.FS
 }
 
 func (h spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -102,17 +104,23 @@ func (h spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	rel := strings.TrimPrefix(r.URL.Path, "/")
 	if rel == "" {
-		http.ServeFile(w, r, filepath.Join(h.distDir, "index.html"))
+		http.ServeFileFS(w, r, h.fsys, "index.html")
 		return
 	}
 
-	target := filepath.Join(h.distDir, filepath.FromSlash(rel))
-	if info, err := os.Stat(target); err == nil && !info.IsDir() {
-		http.ServeFile(w, r, target)
+	// ValidPath rejects anything that would climb out of the filesystem root
+	// ("../secret"), so the embedded and on-disk cases are both contained.
+	name := path.Clean(rel)
+	if !fs.ValidPath(name) {
+		http.NotFound(w, r)
+		return
+	}
+	if info, err := fs.Stat(h.fsys, name); err == nil && !info.IsDir() {
+		http.ServeFileFS(w, r, h.fsys, name)
 		return
 	}
 
 	// Vue hash router: unknown paths fall back to index.html so deep links
 	// like /#/checkout work from any entry point.
-	http.ServeFile(w, r, filepath.Join(h.distDir, "index.html"))
+	http.ServeFileFS(w, r, h.fsys, "index.html")
 }

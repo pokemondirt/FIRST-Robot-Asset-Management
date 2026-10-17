@@ -8,29 +8,61 @@
     "items": "物资",
     "history": "流水",
     "board": "展板",
+    "guide": "分类",
     "settings": "设置"
+  },
+  "theme": {
+    "auto": "主题：跟随系统（点击切换）",
+    "light": "主题：浅色（点击切换）",
+    "dark": "主题：深色（点击切换）"
+  },
+  "alerts": {
+    "title": "库存预警",
+    "none": "库存正常 ✓",
+    "critical": "缺货",
+    "warning": "偏低",
+    "stock": "库存"
+  },
+  "guide": {
+    "title": "物资分类说明"
   },
   "scan": {
     "quantity": "数量",
     "operator": "操作人",
     "note": "备注",
-    "unknown": "未识别条码",
-    "selectOperator": "请选择操作人"
+    "unknown": "未识别条码"
+  },
+  "op": {
+    "mode": "作业模式",
+    "operator": "操作人",
+    "qty": "数量",
+    "note": "备注",
+    "notePlaceholder": "备注会写进每条流水（可选）",
+    "selectOperator": "请选择操作人",
+    "scanReady": "扫码或输入条码，回车即完成{mode}",
+    "scanBlocked": "请先选择操作人",
+    "imeHint": "扫码前请确认输入法是英文（按 Shift 切换）",
+    "imeDetected": "检测到中文输入法，这次输入已丢弃。请按 Shift 切到英文后重新扫码。",
+    "current": "当前物资",
+    "noCurrent": "扫一个条码，这里会显示物资信息和当前库存",
+    "session": "本次作业",
+    "sessionEmpty": "还没有操作记录",
+    "undo": "撤销",
+    "undone": "已撤销",
+    "clear": "清空记录",
+    "done": "已登记",
+    "insufficient": "库存不足（现有 {have}，需要 {need}）",
+    "invalidQty": "数量不合法",
+    "invalidType": "操作类型不合法",
+    "operatorInvalid": "操作人不可用，请重新选择",
+    "stock": "库存",
+    "location": "库位",
+    "count": "共 {n} 笔"
   },
   "batch": {
-    "scanPlaceholder": "扫码或输入条码后回车 — 可连续扫码添加多种物资",
-    "operation": "操作",
-    "out": "出库",
     "in": "入库",
-    "return": "归还",
-    "added": "已添加",
-    "confirmAll": "确认全部",
-    "clearAll": "清空列表",
-    "emptyHint": "在上方扫码或输入条码来添加物资到操作列表，支持同时出库、入库和归还",
-    "allSuccess": "全部操作成功，共 {count} 笔",
-    "allFailed": "所有操作均失败，请检查后重试",
-    "partialSuccess": "部分成功：{ok} 笔成功，{err} 笔失败（已保留失败的条目）",
-    "insufficient": "库存不足（现有 {have}，需要 {need}）"
+    "out": "出库",
+    "return": "归还"
   },
   "item": {
     "barcode": "条码",
@@ -51,15 +83,42 @@
     "add": "新增物资",
     "import": "导入",
     "export": "导出",
-    "template": "下载模板"
+    "template": "模板",
+    "initialQty": "初始库存",
+    "stockHint": "改这里等于做一次盘点，会记一笔流水",
+    "stockAdjustNote": "编辑物资时调整库存",
+    "barcodeAuto": "留空则自动生成编号",
+    "barcodeKeep": "留空保持当前条码",
+    "barcodeAutoHint": "留空则由系统编号（如 FRC-BLK-00001）；商品自带条码就直接填这里",
+    "barcodeSystemHint": "当前是系统自动编号，改项目/模式会重新生成",
+    "barcodeCustomHint": "当前是手动条码，改项目/模式不会变动它",
+    "guideLink": "不知道选哪个？看分类说明",
+    "autoSuggested": "已按名称自动选了「{name}」，不对就点上面的分类改",
+    "editTitle": "编辑物资",
+    "showInactive": "显示已停用",
+    "updated": "已更新",
+    "created": "已新增",
+    "deactivated": "已停用",
+    "activated": "已启用",
+    "imported": "导入完成：新增 {created} 条，错误 {errors} 条",
+    "activate": "启用",
+    "empty": "没有匹配的物资",
+    "purgeTitle": "彻底删除物资",
+    "purgeWarn": "即将删除该物资的档案、库存和全部出入库流水，此操作无法恢复：",
+    "purgePassword": "删除保护密码",
+    "purgePasswordHint": "输入密码以确认删除",
+    "purgeConfirm": "确认删除",
+    "purged": "已彻底删除"
   },
-  "settings": {
-    "backup": "备份数据库",
-    "stats": "统计",
-    "totalItems": "物资种类",
-    "lowStock": "低库存",
-    "locationInUse": "该库位仍被 {count} 种物资使用，请先改掉这些物资的库位",
-    "categoryInUse": "该分类仍被 {count} 种物资使用，请先改掉这些物资的分类"
+  "history": {
+    "all": "全部",
+    "count": "共 {n} 条",
+    "refresh": "刷新",
+    "time": "时间",
+    "type": "类型",
+    "item": "物资",
+    "empty": "暂无流水记录",
+    "adjust": "盘点"
   },
   "board": {
     "title": "仓库展板",
@@ -77,20 +136,61 @@
     "allOk": "暂无预警，库存正常",
     "autoRefresh": "每 30 秒自动刷新"
   },
+  "settings": {
+    "backup": "备份数据库",
+    "backupDone": "备份完成",
+    "stats": "库存概况",
+    "totalItems": "物资种类",
+    "lowStock": "低库存",
+    "totalUnits": "总库存件数",
+    "backupDesc": "生成一份数据库快照，保存在 data/backups/ 目录。升级或大批量改动前建议先备份。",
+    "locationInUse": "该库位仍被 {count} 种物资使用，请先改掉这些物资的库位",
+    "categoryInUse": "该分类仍被 {count} 种物资使用，请先改掉这些物资的分类",
+    "sectionData": "概览与数据",
+    "sectionDataSub": "库存概况与数据库备份",
+    "sectionSecurity": "安全",
+    "sectionSecuritySub": "彻底删除物资前的保护密码",
+    "sectionMaster": "基础档案",
+    "sectionMasterSub": "操作人、库位与分类",
+    "purgeTitle": "删除保护密码",
+    "purgeDesc": "彻底删除物资前必须输入此密码（至少 4 位）。未设置时只能停用，无法彻底删除。留空保存即清除密码。",
+    "purgeSet": "已设置",
+    "purgeUnset": "未设置",
+    "purgePlaceholder": "新密码（留空保存则清除）",
+    "passwordTooShort": "密码至少 4 位"
+  },
   "operators": {
-    "title": "操作人管理",
-    "hint": "添加后会在出库/入库页的下拉框中显示；输入姓名后点添加或按回车。",
+    "title": "操作人",
     "placeholder": "输入队员姓名",
     "add": "添加",
     "added": "已添加操作人",
+    "deactivated": "已停用操作人",
     "nameRequired": "请输入姓名",
     "empty": "暂无操作人，请先添加"
   },
+  "master": {
+    "locationTitle": "库位管理",
+    "locationCode": "库位编号（如 A-01）",
+    "locationName": "中文名",
+    "categoryTitle": "分类管理",
+    "categoryZh": "分类中文名",
+    "categoryEn": "英文名（可选）",
+    "locAdded": "库位已添加",
+    "locUpdated": "库位已更新",
+    "locDeleted": "库位已删除",
+    "catAdded": "分类已添加",
+    "catUpdated": "分类已更新",
+    "catDeleted": "分类已删除",
+    "none": "暂无数据"
+  },
   "common": {
+    "edit": "编辑",
     "save": "保存",
     "saved": "已保存",
     "cancel": "取消",
     "delete": "停用",
-    "loading": "加载中…"
+    "purge": "彻底删除",
+    "remove": "删除",
+    "loading": "处理中…"
   }
 }
