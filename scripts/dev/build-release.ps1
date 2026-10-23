@@ -1,12 +1,13 @@
-# =========================================================
+﻿# =========================================================
 #  build-release.ps1
 #  One-click publish. Builds the frontend once, then cross
 #  compiles a self-contained package per target platform.
 #  The result needs neither Go nor Node.js on the target PC:
 #  the Go binary is static (modernc.org/sqlite is pure Go, so
-#  CGO stays off) and the UI is served from dist/.
+#  CGO stays off) and the built UI is embedded in the exe, so
+#  the package is a single file plus its launchers.
 #
-#  Usage:
+#  Run it through build-release.cmd (double-clickable), or:
 #    .\build-release.ps1
 #    .\build-release.ps1 -Targets windows/amd64
 #    .\build-release.ps1 -Targets windows/amd64,linux/amd64,darwin/arm64
@@ -24,7 +25,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Root   = $PSScriptRoot
+$Here   = $PSScriptRoot                               # scripts\dev
+$Root   = Split-Path -Parent (Split-Path -Parent $Here)
 $GoDir  = Join-Path $Root "backend-go"
 $Front  = Join-Path $Root "frontend"
 $RelSrc = Join-Path $Root "scripts\release"

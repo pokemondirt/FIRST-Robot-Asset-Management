@@ -17,81 +17,64 @@ FRC + FTC 共用 · 扫码枪自助出入库
 - [Go 1.22+](https://go.dev/dl/)
 - [Node.js 18+](https://nodejs.org/)（开发前端或构建静态页）
 
-## 快速启动（开发）
+## 启动（只有这一个入口）
 
-在项目根目录双击 `start.cmd`，或：
+双击根目录的 **「启动.cmd」** 就行。它会按顺序做完：
 
-```powershell
-.\start.cmd
-```
+1. 第一次运行时构建前端（需要 Node.js；已构建过则跳过）
+2. 编译服务端，并把前端内嵌进 exe
+3. 启动服务，端口就绪后自动打开浏览器
 
-浏览器会打开 **http://127.0.0.1:5173/#/checkout**。
+浏览器：**http://127.0.0.1:8000/#/checkout** —— 关掉窗口 = 停止服务。
+服务同时监听局域网，启动日志里的 `On this network` 一行就是可以分享给其他电脑的地址。
 
-- 后端 API：`http://127.0.0.1:8000`
-- 前端开发服：`5173`（通过 Vite 代理访问 `/api`）
+> 已经有实例在跑时，再双击只会打开浏览器，不会重复启动（避免端口冲突）。
 
 ### 为什么入口是 .cmd 而不是 .ps1
 
 Windows 默认执行策略（`RemoteSigned`）会拒绝运行未签名的 `.ps1`；个别目录还会让 PowerShell
 直接报 `AuthorizationManager check failed`，即使策略本身允许该文件。`.cmd` 启动器内部用
-`-ExecutionPolicy Bypass` 调用 PowerShell，两种情况都能正常启动，也不需要修改系统设置。
+`-ExecutionPolicy Bypass` 调用 PowerShell，两种情况都能正常启动，也不需要改系统设置。
 
-如果确实想直接跑 `.ps1`：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\start.ps1
-```
-
-可用启动器：
-
-| 启动器 | 作用 |
-|--------|------|
-| `start.cmd` | 开发模式：Go 后端 + Vite 开发服 |
-| `start-one-port.cmd` | 构建前端并以单端口 8000 运行 |
-| `start-go.cmd` | 仅启动 Go 后端 |
-| `build-frontend.cmd` | 构建前端到 `frontend/dist` |
-| `build-release.cmd` | 打跨平台发布包 |
-
-仅启动前端开发服：`powershell -ExecutionPolicy Bypass -File .\start-frontend.ps1`
-
-## 单端口部署（仓库电脑）
+不想双击的话，等价命令：
 
 ```powershell
-.\build-frontend.cmd
-.\start-go.cmd
+powershell -ExecutionPolicy Bypass -File .\scripts\start-server.ps1
 ```
 
-浏览器：**http://127.0.0.1:8000/#/checkout**
+### 其它脚本（都在 `scripts/` 里，日常用不到）
+
+| 脚本 | 作用 |
+|------|------|
+| `scripts\dev\dev.cmd` | 开发模式：后端 8000 + Vite 5173（改前端热更新，不用重编 exe） |
+| `scripts\dev\build-frontend.cmd` | 只重新构建前端并写入 `backend-go/webembed/dist` |
+| `scripts\dev\build-release.cmd` | 打发布包（默认 windows/amd64 + arm64） |
+| `scripts\ime\start-ime-helper.cmd` | 可选：扫码框聚焦时自动把输入法切英文 |
 
 ## 一键安装包（目标电脑无需 Go / Node.js）
 
 发布包是自包含的：后端是**静态编译的单个可执行文件**（SQLite 驱动 `modernc.org/sqlite`
-是纯 Go 实现，不需要 CGO、不需要任何 DLL），前端是构建好的静态文件，由同一个进程托管。
+是纯 Go 实现，不需要 CGO、不需要任何 DLL），**前端已经内嵌在 exe 里**，包里没有 `dist` 目录。
 
 ```powershell
-.\build-release.ps1                            # 默认 windows/amd64 + windows/arm64
-.\build-release.ps1 -Targets windows/amd64     # 只出一个目标
-.\build-release.ps1 -Targets windows/amd64,linux/amd64,darwin/arm64
+scripts\dev\build-release.cmd                        # 默认 windows/amd64 + windows/arm64
+scripts\dev\build-release.cmd -Targets windows/amd64 # 只出一个目标
 ```
 
 产物在 `scripts/release/out/FIRST-Inventory-<os>-<arch>.zip`。把它拷到目标电脑：
 
 1. 解压到任意目录（建议 `D:\FIRST-Robot-Inventory`）
-2. 双击 `start.bat`（或先运行 `install-desktop.bat` 建桌面快捷方式）
+2. 双击 `start.bat`（或直接双击 `inventory-server.exe`；也可先运行
+   `install-desktop.bat` 建桌面快捷方式）
 3. 首次启动 Windows 防火墙会询问，勾选「专用网络」并允许
-
-**前端已经编进 exe 里**，包里没有 `dist` 目录：`inventory-server.exe` 一个文件就能跑，
-双击它和在 Go 里 `go build` 出来的是同一个东西。`build-frontend.cmd` 会把 `frontend/dist`
-拷到 `backend-go/webembed/dist` 再编进去。
 
 数据库在解压目录的 `data\inventory.db`（首次运行自动创建），**升级时只替换 exe、保留 `data\` 即可**。
 
 > 本机 Go 工具链是 32 位的（`GOARCH=386`），所以脚本里始终显式指定目标架构；
 > 否则会不小心发出一个 32 位版本。
 
-> 开发时如果想改完前端立刻生效、不重新编译 exe：把前端跑在 Vite（`start.cmd`）或先
-> `build-frontend.cmd` 再 `start-go.cmd`。服务器会**优先使用磁盘上的 `frontend/dist`**，
-> 找不到才用 exe 里内置的那份。
+> 服务器**优先使用磁盘上的 `frontend/dist`**，找不到才用 exe 里内嵌的那份。
+> 所以开发时用 `dev.cmd` 改前端可以立即生效，发布时才会用到内嵌副本。
 
 ## 局域网共用
 
@@ -164,14 +147,14 @@ git push origin v1.0.0
 ## 项目结构
 
 ```
-backend-go/     Go HTTP API，webembed/ 里内嵌构建好的前端
-frontend/       Vue 3 界面
-start.ps1       开发：Go + Vite
-start-go.ps1    仅 Go 后端
-build-frontend.ps1  构建前端并写入 backend-go/webembed/dist
-build-release.ps1   交叉编译出单文件免安装发布包（scripts/release/out/）
-scripts/release/    发布包模板（start.bat / open-browser.ps1 / 说明）
-scripts/ime/        可选：扫码时自动切英文输入法
+启动.cmd            唯一的启动入口（双击即可）
+backend-go/         Go HTTP API，webembed/ 里内嵌构建好的前端
+frontend/           Vue 3 界面
+scripts/
+  start-server.ps1    「启动.cmd」的实际实现
+  dev/                开发用：dev.cmd（Vite 热更新）、build-frontend、build-release
+  release/            发布包模板（start.bat / open-browser.ps1 / 说明）
+  ime/                可选：扫码时自动切英文输入法
 .github/workflows/  CI 与自动发布
 LICENSE             MIT
 CHANGELOG.md        版本变更记录

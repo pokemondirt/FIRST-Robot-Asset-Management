@@ -1,4 +1,4 @@
-# Waits until the server is actually accepting connections and only then opens
+﻿# Waits until the server is actually accepting connections and only then opens
 # the browser. start.bat runs this in the background, so opening the page
 # immediately used to race the server start and show a connection error.
 #

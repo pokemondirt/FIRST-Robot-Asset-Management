@@ -26,8 +26,13 @@
 - **扫码输入法防护**：检测到中文输入法组字或非 ASCII 输入时立即丢弃并提示，
   不会把拼音当成条码提交；另提供可选的 Windows 助手脚本（`scripts/ime/`）在扫码框聚焦时自动切英文。
 - **单文件 exe**：前端通过 `//go:embed` 编进可执行文件，发布包不再需要 `dist` 目录。
-- **`.cmd` 启动器**：`start.cmd` / `start-one-port.cmd` / `start-go.cmd` / `build-frontend.cmd` /
-  `build-release.cmd`，内部用 `-ExecutionPolicy Bypass`，绕开 Windows 拒绝运行未签名 `.ps1` 的问题。
+- **`.cmd` 启动器**：根目录只保留一个 `启动.cmd`（自动构建前端 → 编译 → 启动 → 开浏览器），
+  其余脚本收进 `scripts/`（`dev/dev.cmd`、`dev/build-frontend.cmd`、`dev/build-release.cmd`、
+  `ime/start-ime-helper.cmd`）。启动器内部用 `-ExecutionPolicy Bypass`，
+  绕开 Windows 拒绝运行未签名 `.ps1` 的问题。
+- **启动脚本瘦身**：从 11 个根目录启动/构建脚本收敛为 1 个入口，删掉重复的
+  `start.ps1` / `start-go.*` / `start-one-port.*` / `start-frontend.ps1` 和未被引用的
+  `scripts/Test-PortInUse.ps1`。
 - 后端新增 12 个回归测试（自带条码保留、重复条码、条码字符校验、盘点改库存、分类补全迁移等）。
 
 ### 变更 / Changed
